@@ -41,6 +41,20 @@ It forms the foundation for *Tyrone*, a continuously learning, reasoning-driven 
 
 ---
 
+Flow Summary:
+
+I/O receives input →
+
+Cognition interprets (Intent → Memory → Plan) →
+
+Control manages the reasoning loop and reflection →
+
+Action executes results →
+
+Infrastructure ensures persistence, logging, and config stability.
+
+
+
 ## 🧠 Concept
 
 ARS is inspired by principles of **architectural cognition** — the idea that an AI system can organize its own reasoning flow much like a human mind:

@@ -1,12 +1,18 @@
 # Autonomous_Reasoning_System/memory/singletons.py
 
-from __future__ import annotations
-from typing import Optional
 
-# Global cache
-_embedding_model: Optional["EmbeddingModel"] = None
-_memory_storage: Optional["MemoryStorage"] = None
-_vector_store: Optional["VectorStore"] = None
+from __future__ import annotations
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .embeddings import EmbeddingModel
+    from .storage import MemoryStorage
+    from .vector_store import VectorStore
+
+_embedding_model: Optional[EmbeddingModel] = None
+_memory_storage: Optional[MemoryStorage] = None
+_vector_store: Optional[VectorStore] = None
+
 
 
 def get_embedding_model():

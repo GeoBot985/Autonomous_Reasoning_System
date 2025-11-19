@@ -1,14 +1,16 @@
 # memory/vector_memory.py
-from .storage import MemoryStorage
-from .embeddings import EmbeddingModel
-from .vector_store import VectorStore
+from .singletons import (
+    get_embedding_model,
+    get_memory_storage,
+    get_vector_store,
+)
 import numpy as np
 
 class VectorMemory:
     def __init__(self):
-        self.storage = MemoryStorage()
-        self.embedder = EmbeddingModel()
-        self.vectors = VectorStore()
+        self.storage = get_memory_storage()
+        self.embedder = get_embedding_model()
+        self.vectors = get_vector_store()
 
     def add(self, text, memory_type="note", importance=0.5):
         # 1. Add to symbolic store

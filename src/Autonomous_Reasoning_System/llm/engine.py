@@ -37,19 +37,8 @@ def call_llm(system_prompt: str, user_prompt: str) -> str:
     the model can calculate ages and interpret time properly.
     """
     # ✅ Get current date in local timezone
-    now = datetime.now(ZoneInfo("Africa/Johannesburg"))
-    today_str = now.strftime("%d %B %Y").lstrip("0")  # Handles Windows & Unix
-
-
-    # ✅ Reality/bootstrap context
-    date_context = (
-        f"Today's date is {today_str}. "
-        "Use this date when calculating ages or interpreting time references. "
-        "Assume local timezone is Africa/Johannesburg (UTC+02:00)."
-    )
-
-    # ✅ Merge everything into a single "system" message
-    merged_system = f"{system_prompt}\n\n{date_context}"
+        # Date injection removed — personal facts override everything
+    merged_system = system_prompt
 
     # ✅ Example call to local LLM via Ollama
     full_input = f"SYSTEM:\n{merged_system}\n\nUSER:\n{user_prompt}"

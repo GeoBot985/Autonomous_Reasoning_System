@@ -6,7 +6,7 @@ from datetime import datetime
 from uuid import uuid4
 import numpy as np
 
-from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
+from Autonomous_Reasoning_System.memory.singletons import get_embedding_model
 
 
 class EpisodicMemory:
@@ -18,7 +18,7 @@ class EpisodicMemory:
     def __init__(self, db_path="data/episodes.parquet"):
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self.embedder = EmbeddingModel()
+        self.embedder = get_embedding_model()
         self._ensure_table()
         self.active_episode_id = None
 

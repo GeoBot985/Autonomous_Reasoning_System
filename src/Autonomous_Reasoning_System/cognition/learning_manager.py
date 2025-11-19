@@ -8,12 +8,12 @@ import threading
 
 from datetime import datetime, timedelta
 from collections import defaultdict
-from ..memory.storage import MemoryStorage
+from ..memory.singletons import get_memory_storage
 
 
 class LearningManager:
     def __init__(self):
-        self.memory = MemoryStorage()
+        self.memory = get_memory_storage()
         self.experience_buffer = []   # incoming validation results
         self.last_summary_time = datetime.utcnow()
         self.lock = threading.Lock()

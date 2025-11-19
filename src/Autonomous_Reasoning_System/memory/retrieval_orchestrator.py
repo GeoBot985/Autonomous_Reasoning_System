@@ -1,4 +1,7 @@
-from Autonomous_Reasoning_System.memory.storage import MemoryStorage
+from Autonomous_Reasoning_System.memory.singletons import (
+    get_embedding_model,
+    get_memory_storage,
+)
 import re
 import numpy as np
 
@@ -13,8 +16,8 @@ class RetrievalOrchestrator:
     """
 
     def __init__(self):
-        self.memory = MemoryStorage()
-        self.embedder = self.memory.embedder  # reuse the same embedding model
+        self.memory = get_memory_storage()
+        self.embedder = get_embedding_model()  # reuse the same embedding model
 
     # ---------------------------------------------------
     def detect_intent(self, query: str) -> str:

@@ -9,7 +9,7 @@ Integration test:
 
 from Autonomous_Reasoning_System.llm.context_adapter import ContextAdapter
 from Autonomous_Reasoning_System.llm.consolidator import ReasoningConsolidator
-from Autonomous_Reasoning_System.memory.storage import MemoryStorage
+from Autonomous_Reasoning_System.memory.singletons import get_memory_storage
 import pandas as pd
 
 
@@ -17,7 +17,7 @@ def run_reasoning_cycle():
     print("🔁 Starting reasoning cycle test with consolidation trigger...\n")
 
     adapter = ContextAdapter()
-    mem = MemoryStorage()
+    mem = get_memory_storage()
     consolidator = ReasoningConsolidator()
 
     # ---------------------------------------------------------

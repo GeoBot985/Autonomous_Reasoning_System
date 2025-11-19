@@ -1,8 +1,10 @@
 # Autonomous_Reasoning_System/memory/vector_memory.py
 
-from Autonomous_Reasoning_System.memory.storage import MemoryStorage
-from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
-from Autonomous_Reasoning_System.memory.vector_store import VectorStore
+from Autonomous_Reasoning_System.memory.singletons import (
+    get_embedding_model,
+    get_memory_storage,
+    get_vector_store,
+)
 import numpy as np
 
 
@@ -13,9 +15,9 @@ class VectorMemory:
 
     def __init__(self):
         print("🧠 Vector Memory initialized.")
-        self.storage = MemoryStorage()
-        self.embedder = EmbeddingModel()
-        self.vectors = VectorStore()
+        self.storage = get_memory_storage()
+        self.embedder = get_embedding_model()
+        self.vectors = get_vector_store()
 
     def add(self, text, memory_type="note", importance=0.5):
         """

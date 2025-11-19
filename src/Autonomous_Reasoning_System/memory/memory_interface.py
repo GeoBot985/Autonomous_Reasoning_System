@@ -1,8 +1,11 @@
 # Autonomous_Reasoning_System/memory/memory_interface.py
 
-from Autonomous_Reasoning_System.memory.storage import MemoryStorage
+from Autonomous_Reasoning_System.memory.singletons import (
+    get_embedding_model,
+    get_memory_storage,
+    get_vector_store,
+)
 from Autonomous_Reasoning_System.memory.episodes import EpisodicMemory
-from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
 import numpy as np
 from datetime import datetime
 
@@ -14,9 +17,10 @@ class MemoryInterface:
     """
 
     def __init__(self):
-        self.storage = MemoryStorage()
+        self.storage = get_memory_storage()
         self.episodes = EpisodicMemory()
-        self.embedder = self.storage.embedder  # share same model
+        self.embedder = get_embedding_model()
+        self.vector_store = get_vector_store()
 
     # ------------------------------------------------------------------
     def store(self, text: str, memory_type="note", importance=0.5):

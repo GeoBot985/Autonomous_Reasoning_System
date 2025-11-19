@@ -1,6 +1,6 @@
 # Autonomous_Reasoning_System/llm/consolidator.py
 
-from ..memory.storage import MemoryStorage
+from ..memory.singletons import get_memory_storage
 from .engine import call_llm
 
 
@@ -10,7 +10,7 @@ class ReasoningConsolidator:
     """
 
     def __init__(self):
-        self.memory = MemoryStorage()
+        self.memory = get_memory_storage()
 
     def consolidate_recent(self, limit: int = 5):
         """

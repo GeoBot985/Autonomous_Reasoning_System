@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta
-from Autonomous_Reasoning_System.memory.storage import MemoryStorage
+from Autonomous_Reasoning_System.memory.singletons import get_memory_storage
 from Autonomous_Reasoning_System.control.scheduler import check_due_reminders
 import time
 
 print("=== 🧠 Reminder System Test ===")
 
-mem = MemoryStorage()
+mem = get_memory_storage()
 
 # Schedule a reminder 30 seconds in the future
 reminder_time = datetime.utcnow() + timedelta(seconds=30)

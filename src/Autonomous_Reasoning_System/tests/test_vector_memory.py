@@ -1,8 +1,8 @@
 # tests/test_vector_memory.py
-from Autonomous_Reasoning_System.memory.storage import MemoryStorage
+from Autonomous_Reasoning_System.memory.singletons import get_memory_storage
 
 def main():
-    store = MemoryStorage()
+    store = get_memory_storage()
     store.add_memory("I met Sarah at the coffee shop yesterday.", "note")
     store.add_memory("Meeting with John about project timeline next week.", "note")
     store.add_memory("Remember to buy groceries for the weekend.", "note")

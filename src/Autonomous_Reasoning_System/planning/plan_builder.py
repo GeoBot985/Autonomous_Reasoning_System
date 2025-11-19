@@ -7,7 +7,7 @@ This module handles structure and progress tracking only,
 leaving execution control to the CoreLoop or Scheduler.
 """
 from unittest import result
-from Autonomous_Reasoning_System.memory.storage import MemoryStorage
+from Autonomous_Reasoning_System.memory.singletons import get_memory_storage
 from Autonomous_Reasoning_System.llm.reflection_interpreter import ReflectionInterpreter
 from Autonomous_Reasoning_System.llm.plan_reasoner import PlanReasoner
 
@@ -103,7 +103,7 @@ class PlanBuilder:
     def __init__(self, reflector: ReflectionInterpreter | None = None):
         self.active_goals: Dict[str, Goal] = {}
         self.active_plans: Dict[str, Plan] = {}
-        self.memory = MemoryStorage()
+        self.memory = get_memory_storage()
         self.reflector = reflector or ReflectionInterpreter()
         self.reasoner = PlanReasoner() 
 

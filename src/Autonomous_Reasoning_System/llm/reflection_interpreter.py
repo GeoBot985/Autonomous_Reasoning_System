@@ -1,6 +1,6 @@
 import json
 import re
-from ..memory.storage import MemoryStorage
+from ..memory.singletons import get_memory_storage
 from ..memory.retrieval_orchestrator import RetrievalOrchestrator
 from .engine import call_llm
 
@@ -13,7 +13,7 @@ class ReflectionInterpreter:
     """
 
     def __init__(self):
-        self.memory = MemoryStorage()
+        self.memory = get_memory_storage()
         self.retriever = RetrievalOrchestrator()
 
     # ----------------------------------------------------------------------

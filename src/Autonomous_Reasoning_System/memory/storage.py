@@ -9,8 +9,10 @@ import threading
 from pathlib import Path
 
 
-from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
-from Autonomous_Reasoning_System.memory.vector_store import VectorStore
+from Autonomous_Reasoning_System.memory.singletons import (
+    get_embedding_model,
+    get_vector_store,
+)
 
 # 🔒 Global DuckDB lock (shared across all MemoryStorage instances)
 GLOBAL_DUCKDB_LOCK = threading.RLock()
@@ -56,8 +58,8 @@ class MemoryStorage:
         self._lock = threading.Lock()
 
         # 🔤 Initialize embedding + vector systems
-        self.embedder = EmbeddingModel()
-        self.vector_store = VectorStore()
+        self.embedder = get_embedding_model()
+        self.vector_store = get_vector_store()
 
         # Ensure table/file structure
         self._ensure_table()
@@ -147,7 +149,7 @@ class MemoryStorage:
                             pass
                     # re-instantiate VectorStore cleanly
                     from Autonomous_Reasoning_System.memory.vector_store import VectorStore
-                    self.vector_store = VectorStore()
+                    self.vector_store = get_vector_store()
 
                 added = 0
                 for _, row in df.iterrows():

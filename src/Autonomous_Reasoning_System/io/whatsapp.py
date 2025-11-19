@@ -3,10 +3,9 @@ import sys
 import threading
 import time
 from collections import deque
+from Autonomous_Reasoning_System.control.core_loop import CoreLoop
 from playwright.sync_api import sync_playwright
 
-# ✅ now only imports this single line of logic
-from .workspace import handle_message
 
 USER_DATA_DIR = r"C:\Users\GeorgeC\AppData\Local\Google\Chrome\User Data\Profile 2"
 SELF_CHAT_URL = "https://web.whatsapp.com/send/?phone=27796995695"
@@ -17,6 +16,12 @@ SELF_PREFIXES = ("noted", "task noted", "sorry", "⚠️", "error", "ok", "done"
 SENT_CACHE = deque(maxlen=10)
 
 LAST_OUTGOING = None  # tracks last message sent
+
+tyrone = CoreLoop()
+
+def handle_message(text: str):
+    out = tyrone.run_once(text)
+    return out.get("summary", "(no summary)")
 
 
 # --------------------------------------------------------------------------

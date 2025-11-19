@@ -12,6 +12,7 @@ from Autonomous_Reasoning_System.planning.plan_builder import PlanBuilder
 from Autonomous_Reasoning_System.control.attention_manager import attention
 
 
+
 class CoreLoop:
     def __init__(self):
         self.router = Router()

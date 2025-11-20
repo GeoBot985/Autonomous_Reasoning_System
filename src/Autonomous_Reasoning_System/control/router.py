@@ -4,25 +4,90 @@ from Autonomous_Reasoning_System.control.dispatcher import Dispatcher
 
 logger = logging.getLogger(__name__)
 
+class IntentFamily:
+    MEMORY = "memory_operations"
+    QA = "question_answering"
+    GOALS = "goals_tasks"
+    SUMMARIZATION = "summarization"
+    REFLECTION = "reflection"
+    SELF_ANALYSIS = "self_analysis"
+    TOOL_EXECUTION = "tool_execution"
+    PLANNING = "planning"
+    UNKNOWN = "unknown"
+
 class Router:
     """
     Router determines the sequence of tools (pipeline) to execute based on user input.
+    Now organized by Intent Families.
     """
     def __init__(self, dispatcher: Dispatcher):
         self.dispatcher = dispatcher
-        self.intent_pipeline_map = {
-            "remind": ["store_memory"],
-            "remember": ["store_memory"],
-            "reflect": ["perform_reflection"],
-            "summarize": ["summarize_context"],
-            "recall": ["search_memory"],
-            "search": ["search_memory"],
-            "plan": ["plan_steps"],
-            "query": ["answer_question"],
-            "answer": ["answer_question"],
-            "deterministic": ["deterministic_responder"],
+
+        # 1. Map Intents to Families
+        self.intent_family_map = {
+            # Memory
+            "remind": IntentFamily.MEMORY,
+            "remember": IntentFamily.MEMORY,
+            "store": IntentFamily.MEMORY,
+            "save": IntentFamily.MEMORY,
+            "recall": IntentFamily.MEMORY,
+            "search": IntentFamily.MEMORY,
+            "find": IntentFamily.MEMORY,
+            "lookup": IntentFamily.MEMORY,
+
+            # QA
+            "query": IntentFamily.QA,
+            "answer": IntentFamily.QA,
+            "ask": IntentFamily.QA,
+            "explain": IntentFamily.QA,
+            "deterministic": IntentFamily.QA,
+            "unknown": IntentFamily.QA, # Default fallback
+
+            # Goals
+            "achieve": IntentFamily.GOALS,
+            "do": IntentFamily.GOALS,
+            "task": IntentFamily.GOALS,
+            "create_goal": IntentFamily.GOALS,
+            "goals": IntentFamily.GOALS,
+            "list_goals": IntentFamily.GOALS,
+            "research": IntentFamily.GOALS,
+            "investigate": IntentFamily.GOALS,
+
+            # Summarization
+            "summarize": IntentFamily.SUMMARIZATION,
+            "tldr": IntentFamily.SUMMARIZATION,
+
+            # Reflection
+            "reflect": IntentFamily.REFLECTION,
+
+            # Self Analysis
+            "status": IntentFamily.SELF_ANALYSIS,
+            "health": IntentFamily.SELF_ANALYSIS,
+            "analyze_self": IntentFamily.SELF_ANALYSIS,
+
+            # Tool Execution
+            "execute": IntentFamily.TOOL_EXECUTION,
+            "run": IntentFamily.TOOL_EXECUTION,
+
+            # Planning
+            "plan": IntentFamily.PLANNING,
+            "blueprint": IntentFamily.PLANNING,
         }
-        # Default fallback pipeline
+
+        # 2. Map Families to Pipelines
+        # To unify routing, we dispatch to a "handler" for the family.
+        # Specific intent logic is handled within that tool or refined here.
+        self.family_pipeline_map = {
+            IntentFamily.MEMORY: ["handle_memory_ops"],
+            IntentFamily.QA: ["answer_question"],
+            IntentFamily.GOALS: ["handle_goal_ops"],
+            IntentFamily.SUMMARIZATION: ["summarize_context"],
+            IntentFamily.REFLECTION: ["perform_reflection"],
+            IntentFamily.SELF_ANALYSIS: ["perform_self_analysis"],
+            IntentFamily.PLANNING: ["plan_steps"],
+            IntentFamily.TOOL_EXECUTION: ["answer_question"], # Fallback/Placeholder
+        }
+
         self.fallback_pipeline = ["answer_question"]
 
     def resolve(self, text: str) -> Dict[str, Any]:
@@ -45,11 +110,15 @@ class Router:
         else:
             logger.warning(f"Intent analysis failed: {analysis_result['errors']}")
 
-        # 2. Select Pipeline
-        pipeline = self._select_pipeline(intent)
+        # 2. Determine Family
+        family = self.intent_family_map.get(intent, IntentFamily.QA) # Default to QA
+
+        # 3. Select Pipeline
+        pipeline = self._select_pipeline(family, intent)
 
         return {
             "intent": intent,
+            "family": family,
             "entities": entities,
             "analysis_data": analysis_data,
             "pipeline": pipeline
@@ -103,28 +172,27 @@ class Router:
     def route(self, text: str, pipeline_override: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Analyzes intent and executes the corresponding tool pipeline.
-        This preserves backward compatibility.
         """
         logger.info(f"Router received input: {text}")
 
         # Always analyze intent first to maintain context
         resolve_result = self.resolve(text)
         intent = resolve_result["intent"]
+        family = resolve_result["family"]
         entities = resolve_result["entities"]
         analysis_data = resolve_result["analysis_data"]
 
         if pipeline_override:
             pipeline = pipeline_override
-            intent = "override" # Or keep original intent? The test implies we just want the analysis call.
-            # But if we override, we probably want to suppress the original intent driving the pipeline.
-            # Let's keep intent as "override" or just use the override pipeline.
+            intent = "override"
             logger.info(f"Using overridden pipeline: {pipeline}")
         else:
             pipeline = resolve_result["pipeline"]
-            logger.info(f"Routing intent: {intent}, Selected pipeline: {pipeline}")
+            logger.info(f"Routing intent: {intent} (Family: {family}), Selected pipeline: {pipeline}")
 
         context = {
             "intent": intent,
+            "family": family,
             "entities": entities,
             "analysis": analysis_data
         }
@@ -133,14 +201,15 @@ class Router:
 
         return {
             "intent": intent,
+            "family": family,
             "pipeline": pipeline,
             "results": execution_result["results"],
             "final_output": execution_result["final_output"]
         }
 
-    def _select_pipeline(self, intent: str) -> List[str]:
-        pipeline = self.intent_pipeline_map.get(intent)
+    def _select_pipeline(self, family: str, intent: str) -> List[str]:
+        pipeline = self.family_pipeline_map.get(family)
         if not pipeline:
-            logger.info(f"No pipeline found for intent '{intent}'. Using fallback.")
+            logger.info(f"No pipeline found for family '{family}'. Using fallback.")
             pipeline = self.fallback_pipeline
         return pipeline

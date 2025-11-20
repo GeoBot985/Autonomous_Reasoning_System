@@ -89,23 +89,28 @@ class MemoryStorage:
                 """)
                 con.close()
             else:
+                # Handle Parquet file backend
+                # Always create the in-memory table structure first if it doesn't exist in current connection context
+                duckdb.sql("""
+                    CREATE TABLE IF NOT EXISTS memory (
+                        id VARCHAR,
+                        text VARCHAR,
+                        memory_type VARCHAR,
+                        created_at TIMESTAMP,
+                        last_accessed TIMESTAMP,
+                        importance DOUBLE,
+                        scheduled_for TIMESTAMP,
+                        status VARCHAR,
+                        source VARCHAR
+                    )
+                """)
+
                 if not os.path.exists(self.db_path):
-                    duckdb.sql("""
-                        CREATE TABLE memory (
-                            id VARCHAR,
-                            text VARCHAR,
-                            memory_type VARCHAR,
-                            created_at TIMESTAMP,
-                            last_accessed TIMESTAMP,
-                            importance DOUBLE,
-                            scheduled_for TIMESTAMP,
-                            status VARCHAR,
-                            source VARCHAR
-                        )
-                    """)
+                    # If parquet file doesn't exist, save the empty table to it
                     duckdb.sql(f"COPY memory TO '{self.db_path}' (FORMAT PARQUET)")
                 else:
-                    # Validate schema and backfill columns if needed
+                    # If parquet exists, load it into memory table (replacing empty one)
+                    # We use CREATE OR REPLACE to ensure we are working with the file's schema/data
                     duckdb.sql(f"""
                         CREATE OR REPLACE TABLE memory AS
                         SELECT * FROM read_parquet('{self.db_path}')

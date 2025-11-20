@@ -1,7 +1,14 @@
 # tests/test_learning_manager.py
-from ..cognition.learning_manager import LearningManager
+import pytest
+from unittest.mock import MagicMock, patch
+from Autonomous_Reasoning_System.cognition.learning_manager import LearningManager
 
-def test_learning_manager_pipeline():
+@patch("Autonomous_Reasoning_System.cognition.learning_manager.get_memory_storage")
+def test_learning_manager_pipeline(mock_get_memory_storage):
+    # Setup mock memory
+    mock_memory = MagicMock()
+    mock_get_memory_storage.return_value = mock_memory
+
     lm = LearningManager()
 
     # Ingest sample experiences
@@ -16,9 +23,10 @@ def test_learning_manager_pipeline():
     summary = lm.summarise_recent(window_minutes=120)
     print("✅ Summary:", summary["summary"])
 
+    assert "summary" in summary
+    assert "positive" in summary["summary"] or "negative" in summary["summary"] or "neutral" in summary["summary"]
+
     drift = lm.perform_drift_correction()
     print("✅ Drift correction:", drift)
 
-
-if __name__ == "__main__":
-    test_learning_manager_pipeline()
+    assert isinstance(drift, str)

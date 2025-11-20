@@ -24,3 +24,4 @@ Thumbs.db
 # Logs and temp files
 *.log
 *.tmp
+src/Autonomous_Reasoning_System/consolidated_app.py

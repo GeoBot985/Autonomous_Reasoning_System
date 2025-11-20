@@ -21,7 +21,7 @@ class MemoryStorage:
     Persistence is now handled by MemoryInterface via PersistenceService.
     """
 
-    def __init__(self, initial_df: pd.DataFrame = None):
+    def __init__(self, initial_df: pd.DataFrame = None, initial_goals_df: pd.DataFrame = None):
         """
         Initialize with an optional DataFrame.
         No longer touches disk directly on init.
@@ -50,8 +50,27 @@ class MemoryStorage:
             self.con.execute("CREATE TABLE memory AS SELECT * FROM initial_memories")
             self.con.unregister('initial_memories')
 
+        if initial_goals_df is None or initial_goals_df.empty:
+            self.con.execute("""
+                CREATE TABLE goals (
+                    id VARCHAR,
+                    text VARCHAR,
+                    priority INTEGER,
+                    status VARCHAR,
+                    steps VARCHAR,
+                    metadata VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+            """)
+        else:
+            self.con.register('initial_goals', initial_goals_df)
+            self.con.execute("CREATE TABLE goals AS SELECT * FROM initial_goals")
+            self.con.unregister('initial_goals')
+
         # Ensure columns exist if loading from a simpler schema
         self._ensure_schema()
+        self._ensure_goals_schema()
 
         # 🔤 Initialize embedding + vector systems
         self.embedder = get_embedding_model()
@@ -72,6 +91,15 @@ class MemoryStorage:
         for col, dtype in required_cols.items():
             if col not in existing_cols:
                 self.con.execute(f"ALTER TABLE memory ADD COLUMN {col} {dtype}")
+
+    def _ensure_goals_schema(self):
+        """Ensure the in-memory goals table matches expected schema."""
+        try:
+             cols = self.con.execute("PRAGMA table_info(goals)").df()
+             existing_cols = cols["name"].tolist()
+             # Basic check, if table didn't exist properly it might be empty
+        except:
+             return
 
     # ------------------------------------------------------------------
     def _escape(self, text: str) -> str:
@@ -197,3 +225,87 @@ class MemoryStorage:
 
         print(f"📝 Updated memory {uid} in storage.")
         return True
+
+    # ------------------------------------------------------------------
+    # Goals Management
+    # ------------------------------------------------------------------
+    def add_goal(self, goal_data: dict):
+        """Insert goal into in-memory DuckDB."""
+        with GLOBAL_DUCKDB_LOCK:
+            # Escape strings
+            text = self._escape(goal_data.get('text', ''))
+            status = self._escape(goal_data.get('status', 'pending'))
+            steps = self._escape(goal_data.get('steps', '[]'))
+            metadata = self._escape(goal_data.get('metadata', '{}'))
+
+            self.con.execute(f"""
+                INSERT INTO goals (
+                    id, text, priority, status, steps, metadata, created_at, updated_at
+                ) VALUES (
+                    '{goal_data['id']}',
+                    '{text}',
+                    {goal_data.get('priority', 1)},
+                    '{status}',
+                    '{steps}',
+                    '{metadata}',
+                    '{goal_data.get('created_at')}',
+                    '{goal_data.get('updated_at')}'
+                );
+            """)
+        return goal_data['id']
+
+    def get_goal(self, goal_id: str) -> dict:
+        with GLOBAL_DUCKDB_LOCK:
+            try:
+                res = self.con.execute(f"SELECT * FROM goals WHERE id='{goal_id}'").df()
+                if not res.empty:
+                    return res.iloc[0].to_dict()
+            except Exception as e:
+                print(f"[MemoryStorage] Error getting goal {goal_id}: {e}")
+        return None
+
+    def get_all_goals(self) -> pd.DataFrame:
+        with GLOBAL_DUCKDB_LOCK:
+            try:
+                return self.con.execute("SELECT * FROM goals").df()
+            except Exception as e:
+                print(f"[MemoryStorage] Error reading goals: {e}")
+                return pd.DataFrame()
+
+    def get_active_goals(self) -> pd.DataFrame:
+         with GLOBAL_DUCKDB_LOCK:
+            try:
+                return self.con.execute("SELECT * FROM goals WHERE status IN ('pending', 'active')").df()
+            except Exception as e:
+                print(f"[MemoryStorage] Error reading active goals: {e}")
+                return pd.DataFrame()
+
+    def update_goal(self, goal_id: str, updates: dict):
+        with GLOBAL_DUCKDB_LOCK:
+            set_clauses = []
+            for k, v in updates.items():
+                if isinstance(v, str):
+                    val = self._escape(v)
+                    set_clauses.append(f"{k} = '{val}'")
+                elif isinstance(v, (int, float)):
+                    set_clauses.append(f"{k} = {v}")
+
+            if not set_clauses:
+                return False
+
+            set_query = ", ".join(set_clauses)
+            try:
+                self.con.execute(f"UPDATE goals SET {set_query} WHERE id='{goal_id}'")
+                return True
+            except Exception as e:
+                print(f"[MemoryStorage] Error updating goal {goal_id}: {e}")
+                return False
+
+    def delete_goal(self, goal_id: str):
+        with GLOBAL_DUCKDB_LOCK:
+            try:
+                self.con.execute(f"DELETE FROM goals WHERE id='{goal_id}'")
+                return True
+            except Exception as e:
+                print(f"[MemoryStorage] Error deleting goal {goal_id}: {e}")
+                return False

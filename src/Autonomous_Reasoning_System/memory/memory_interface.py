@@ -24,6 +24,7 @@ class MemoryInterface:
         # Load data from disk
         print("💾 Loading memory from persistence layer...")
         mem_df = self.persistence.load_deterministic_memory()
+        goals_df = self.persistence.load_goals()
         ep_df = self.persistence.load_episodic_memory()
         v_idx = self.persistence.load_vector_index()
         v_meta = self.persistence.load_vector_metadata()
@@ -33,7 +34,7 @@ class MemoryInterface:
         # might try to get a VectorStore if not already present. We want to ensure
         # the VectorStore is initialized with our loaded data first.
         self.vector_store = get_vector_store(index=v_idx, metadata=v_meta)
-        self.storage = get_memory_storage(initial_df=mem_df)
+        self.storage = get_memory_storage(initial_df=mem_df, initial_goals_df=goals_df)
 
         # EpisodicMemory is not a singleton in the same way, we create it here
         self.episodes = EpisodicMemory(initial_df=ep_df)
@@ -85,6 +86,7 @@ class MemoryInterface:
         """
         print("💾 Saving memory state...")
         self.persistence.save_deterministic_memory(self.storage.get_all_memories())
+        self.persistence.save_goals(self.storage.get_all_goals())
         self.persistence.save_episodic_memory(self.episodes.get_all_episodes())
         self.persistence.save_vector_index(self.vector_store.index)
         self.persistence.save_vector_metadata(self.vector_store.metadata)
@@ -175,6 +177,34 @@ class MemoryInterface:
             self._rebuild_vector_index()
             self.save()
         return result
+
+    # ------------------------------------------------------------------
+    # Goals
+    # ------------------------------------------------------------------
+    def create_goal(self, text: str, priority: int = 1, metadata: dict = None):
+        """Create a new goal."""
+        from Autonomous_Reasoning_System.memory.goals import Goal
+
+        goal = Goal(
+            text=text,
+            priority=priority,
+            metadata=metadata or {}
+        )
+        self.storage.add_goal(goal.to_dict())
+        self.save()
+        return goal.id
+
+    def get_goal(self, goal_id: str):
+        return self.storage.get_goal(goal_id)
+
+    def get_active_goals(self):
+        return self.storage.get_active_goals()
+
+    def update_goal(self, goal_id: str, updates: dict):
+        res = self.storage.update_goal(goal_id, updates)
+        if res:
+            self.save()
+        return res
 
     # ------------------------------------------------------------------
     def summarize_and_compress(self):

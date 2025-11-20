@@ -23,44 +23,109 @@ class MemoryInterface:
         self.vector_store = get_vector_store()
 
     # ------------------------------------------------------------------
-    def store(self, text: str, memory_type="note", importance=0.5):
+    def remember(self, text: str, metadata: dict = None):
         """
-        Add a memory to the system.
-        If an episode is active, link the memory logically to that episode.
+        Add a memory to the system (Unified replacement for store).
         """
-        uid = self.storage.add_memory(text, memory_type, importance)
+        metadata = metadata or {}
+        memory_type = metadata.get("type", "note")
+        importance = metadata.get("importance", 0.5)
+        source = metadata.get("source", "unknown")
+
+        uid = self.storage.add_memory(text, memory_type, importance, source)
         if self.episodes.active_episode_id:
             print(f"🧠 Added memory linked to active episode {self.episodes.active_episode_id}")
         return uid
 
+    # Legacy alias
+    def store(self, text: str, memory_type="note", importance=0.5):
+        return self.remember(text, {"type": memory_type, "importance": importance})
+
     # ------------------------------------------------------------------
+    def retrieve(self, query: str, k=5):
+        """
+        Retrieve top-k semantically similar memories (Unified replacement for recall).
+        Combines vector search and keyword fallback if needed.
+        """
+        try:
+            # 1. Vector Search
+            if hasattr(self, "vector_store"):
+                q_vec = self.embedder.embed(query)
+                results = self.vector_store.search(q_vec, k)
+                if results:
+                    # Format for consumption
+                    return [{"text": r["text"], "score": r["score"], "id": r["id"]} for r in results]
+
+            # 2. Fallback: Keyword search
+            if hasattr(self, "storage"):
+                print("⚠️ Vector search yielded no results, falling back to keyword search.")
+                results = self.storage.search_text(query, top_k=k)
+                return [{"text": r[0], "score": r[1], "id": None} for r in results]
+
+        except Exception as e:
+            print(f"[MemoryInterface] retrieve failed: {e}")
+
+        return []
+
+    # Legacy alias
     def recall(self, query: str, k=5):
-        """
-        Retrieve top-k semantically similar memories from the FAISS index.
-        """
-        q_vec = self.embedder.embed(query)
-        results = self.storage.vector_store.search(q_vec, k)
+        results = self.retrieve(query, k)
         if not results:
             return "No relevant memories found."
         summary = "\n".join([f"- ({r['score']:.3f}) {r['text']}" for r in results])
         return summary
 
+    # Legacy alias
+    def search_similar(self, query: str, top_k: int = 3):
+        return self.retrieve(query, top_k)
+
+    # ------------------------------------------------------------------
+    def update(self, uid: str, new_content: str):
+        """
+        Update an existing memory by ID.
+        """
+        return self.storage.update_memory(uid, new_content)
+
+    # ------------------------------------------------------------------
+    def summarize_and_compress(self):
+        """
+        Summarize recent episodes or day (Unified replacement for summarize_day/end_episode).
+        """
+        # For now, this delegates to summarize_day behavior but could be expanded
+        # to compress older memories, etc.
+        print("🗜️ Running unified memory summarization and compression...")
+
+        # 1. Summarize the day's episodes
+        def simple_summarizer(text):
+            # This should ideally use an LLM
+            words = len(text.split())
+            return f"(summary of {words} words)\n{text[:200]}..."
+
+        summary = self.episodes.summarize_day(simple_summarizer)
+
+        # 2. Could add logic here to compress older memories in 'storage'
+        # (e.g. delete raw logs, keep summary)
+
+        return summary
+
+    # Legacy alias
+    def summarize_day(self):
+        return self.summarize_and_compress()
+
     # ------------------------------------------------------------------
     def start_episode(self, description=None):
         """
         Begin a new episodic context.
-        Optionally add a short description as its first memory.
         """
         eid = self.episodes.begin_episode()
         if description:
-            self.store(f"Episode started: {description}", "context", 0.4)
+            self.remember(f"Episode started: {description}", {"type": "context", "importance": 0.4})
         return eid
 
     # ------------------------------------------------------------------
     def end_episode(self, summary_hint: str = None):
         """
         Close the current episode.
-        Generates a natural-language summary using the local LLM via Ollama.
         """
         from Autonomous_Reasoning_System.memory.llm_summarizer import summarize_with_local_llm
 
@@ -76,42 +141,13 @@ class MemoryInterface:
         to_summarize = f"{summary_hint or ''}\n\n{combined}".strip()
 
         print("🤖 Generating episodic summary via Ollama...")
-        summary = summarize_with_local_llm(to_summarize)
+        # Note: In a real environment without Ollama this might fail or return mock
+        try:
+            summary = summarize_with_local_llm(to_summarize)
+        except Exception as e:
+            print(f"LLM Summarization failed: {e}")
+            summary = "Summary generation failed."
 
         self.episodes.end_episode(summary)
-        print("🧾 Episode summarized (LLM).")
+        print("🧾 Episode summarized.")
         return summary
-    
-    #----------------------------------------------------------------------
-    def search_similar(self, query: str, top_k: int = 3):
-        """
-        Perform a semantic search for experiences similar to the query.
-        Returns a list of dicts: [{'text': ..., 'score': ...}, ...]
-        """
-        try:
-            # If vector search is available
-            if hasattr(self, "vector_store"):
-                q_vec = self.embedder.embed(query)
-                return self.vector_store.search(q_vec, top_k=top_k)
-            
-            # Fallback: keyword match in storage
-            if hasattr(self, "storage"):
-                results = self.storage.search_text(query, top_k=top_k)
-                return [{"text": r[0], "score": r[1]} for r in results]
-        except Exception as e:
-            print(f"[Router|MemoryInterface] search_similar failed: {e}")
-
-        return []
-
-
-
-    # ------------------------------------------------------------------
-    def summarize_day(self):
-        """
-        Summarize all episodes for the current UTC day.
-        """
-        def simple_summarizer(text):
-            words = len(text.split())
-            return f"(summary of {words} words)\n{text[:200]}..."
-
-        return self.episodes.summarize_day(simple_summarizer)

@@ -3,10 +3,7 @@ import duckdb
 import pandas as pd
 from datetime import datetime
 from uuid import uuid4
-import os
-import numpy as np
 import threading
-from pathlib import Path
 
 
 from Autonomous_Reasoning_System.memory.singletons import (
@@ -20,161 +17,65 @@ GLOBAL_DUCKDB_LOCK = threading.RLock()
 
 class MemoryStorage:
     """
-    Handles structured (symbolic) memory using DuckDB + Parquet backend.
-    Automatically embeds each new memory and keeps FAISS index synced.
+    Handles structured (symbolic) memory using in-memory DuckDB.
+    Persistence is now handled by MemoryInterface via PersistenceService.
     """
 
-    def __init__(self, db_path: str = None):
+    def __init__(self, initial_df: pd.DataFrame = None):
         """
-        Automatically detect backend file:
-        - Prefer Parquet if it exists
-        - Fallback to DuckDB if found
-        - Create new Parquet if nothing exists
+        Initialize with an optional DataFrame.
+        No longer touches disk directly on init.
         """
-        base_dir = Path("data")
-        base_dir.mkdir(exist_ok=True)
-
-        # Determine file paths
-        parquet_path = base_dir / "memory.parquet"
-        duckdb_path = base_dir / "memory_store.duckdb"
-
-        # Decide which backend to use
-        if db_path:
-            self.db_path = db_path
-            backend = "custom"
-        elif parquet_path.exists():
-            self.db_path = str(parquet_path)
-            backend = "parquet"
-        elif duckdb_path.exists():
-            self.db_path = str(duckdb_path)
-            backend = "duckdb"
-        else:
-            self.db_path = str(parquet_path)
-            backend = "new_parquet"
-
-        print(f"🧠 Using {backend.upper()} backend → {self.db_path}")
-
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._lock = threading.Lock()
+
+        # Initialize connection
+        self.con = duckdb.connect(database=':memory:')
+
+        if initial_df is None or initial_df.empty:
+            self.con.execute("""
+                CREATE TABLE memory (
+                    id VARCHAR,
+                    text VARCHAR,
+                    memory_type VARCHAR,
+                    created_at TIMESTAMP,
+                    last_accessed TIMESTAMP,
+                    importance DOUBLE,
+                    scheduled_for TIMESTAMP,
+                    status VARCHAR,
+                    source VARCHAR
+                )
+            """)
+        else:
+            self.con.register('initial_memories', initial_df)
+            self.con.execute("CREATE TABLE memory AS SELECT * FROM initial_memories")
+            self.con.unregister('initial_memories')
+
+        # Ensure columns exist if loading from a simpler schema
+        self._ensure_schema()
 
         # 🔤 Initialize embedding + vector systems
         self.embedder = get_embedding_model()
         self.vector_store = get_vector_store()
 
-        # Ensure table/file structure
-        self._ensure_table()
-
-        # 🧩 Attempt to rebuild FAISS index if missing or empty
-        self._rebuild_vector_index_if_needed()
-
     # ------------------------------------------------------------------
-    def _ensure_table(self):
-        """Ensure the storage file exists and matches expected schema."""
-        with GLOBAL_DUCKDB_LOCK:
-            # Handle Parquet vs DuckDB file types
-            if self.db_path.endswith(".duckdb"):
-                con = duckdb.connect(self.db_path)
-                con.execute("""
-                    CREATE TABLE IF NOT EXISTS memory (
-                        id VARCHAR,
-                        text VARCHAR,
-                        memory_type VARCHAR,
-                        created_at TIMESTAMP,
-                        last_accessed TIMESTAMP,
-                        importance DOUBLE,
-                        scheduled_for TIMESTAMP,
-                        status VARCHAR,
-                        source VARCHAR
-                    )
-                """)
-                con.close()
-            else:
-                # Handle Parquet file backend
-                # Always create the in-memory table structure first if it doesn't exist in current connection context
-                duckdb.sql("""
-                    CREATE TABLE IF NOT EXISTS memory (
-                        id VARCHAR,
-                        text VARCHAR,
-                        memory_type VARCHAR,
-                        created_at TIMESTAMP,
-                        last_accessed TIMESTAMP,
-                        importance DOUBLE,
-                        scheduled_for TIMESTAMP,
-                        status VARCHAR,
-                        source VARCHAR
-                    )
-                """)
+    def _ensure_schema(self):
+        """Ensure the in-memory table matches expected schema."""
+        cols = self.con.execute("PRAGMA table_info(memory)").df()
+        existing_cols = cols["name"].tolist()
 
-                if not os.path.exists(self.db_path):
-                    # If parquet file doesn't exist, save the empty table to it
-                    duckdb.sql(f"COPY memory TO '{self.db_path}' (FORMAT PARQUET)")
-                else:
-                    # If parquet exists, load it into memory table (replacing empty one)
-                    # We use CREATE OR REPLACE to ensure we are working with the file's schema/data
-                    duckdb.sql(f"""
-                        CREATE OR REPLACE TABLE memory AS
-                        SELECT * FROM read_parquet('{self.db_path}')
-                    """)
-                    cols = duckdb.sql("PRAGMA table_info(memory)").df()
-                    if "status" not in cols["name"].tolist():
-                        duckdb.sql("ALTER TABLE memory ADD COLUMN status VARCHAR")
-                    if "source" not in cols["name"].tolist():
-                        duckdb.sql("ALTER TABLE memory ADD COLUMN source VARCHAR DEFAULT 'unknown'")
-                    duckdb.sql(f"COPY (SELECT * FROM memory) TO '{self.db_path}' (FORMAT PARQUET)")
+        required_cols = {
+            "status": "VARCHAR",
+            "source": "VARCHAR DEFAULT 'unknown'",
+            "scheduled_for": "TIMESTAMP"
+        }
+
+        for col, dtype in required_cols.items():
+            if col not in existing_cols:
+                self.con.execute(f"ALTER TABLE memory ADD COLUMN {col} {dtype}")
 
     # ------------------------------------------------------------------
     def _escape(self, text: str) -> str:
         return text.replace("'", "''") if text else text
-
-    # ------------------------------------------------------------------
-    def _rebuild_vector_index_if_needed(self, force=False):
-        """
-        Rebuild FAISS index from stored memories if missing, empty, or forced.
-        Ensures it uses the correct data source (the Parquet file).
-        """
-        try:
-            if force or len(self.vector_store.metadata) == 0:
-                print("🔁 Rebuilding FAISS index from stored memories (forced rebuild)...")
-
-                with GLOBAL_DUCKDB_LOCK:
-                    df = duckdb.sql(f"""
-                        SELECT id, text, memory_type, source
-                        FROM read_parquet('{self.db_path}')
-                    """).df()
-
-                # Clear existing FAISS + metadata
-                if hasattr(self.vector_store, "reset"):
-                    self.vector_store.reset()
-                else:
-                    # brute-force delete stale FAISS + metadata
-                    for f in ["data/vector_index.faiss", "data/vector_meta.pkl"]:
-                        try:
-                            os.remove(f)
-                        except FileNotFoundError:
-                            pass
-                    # re-instantiate VectorStore cleanly
-                    from Autonomous_Reasoning_System.memory.vector_store import VectorStore
-                    self.vector_store = get_vector_store()
-
-                added = 0
-                for _, row in df.iterrows():
-                    text = str(row.get("text", "")).strip()
-                    if not text:
-                        continue
-                    vec = self.embedder.embed(text)
-                    meta = {
-                        "memory_type": row.get("memory_type", "unknown"),
-                        "source": row.get("source", "unknown")
-                    }
-                    self.vector_store.add(row["id"], text, vec, meta)
-                    added += 1
-
-                self.vector_store.save()
-                print(f"✅ Rebuilt FAISS index with {added} entries from {self.db_path}")
-
-        except Exception as e:
-            print(f"[WARN] Could not rebuild FAISS index: {e}")
-
 
     # ------------------------------------------------------------------
     def add_memory(
@@ -185,7 +86,7 @@ class MemoryStorage:
         source: str = "unknown",
         scheduled_for: str | None = None,
     ):
-        """Insert memory into DuckDB and automatically embed it (optionally scheduled)."""
+        """Insert memory into in-memory DuckDB and embed it."""
         with GLOBAL_DUCKDB_LOCK:  # 🔒
             new_id = str(uuid4())
             now_str = datetime.utcnow().isoformat()
@@ -194,13 +95,8 @@ class MemoryStorage:
             escaped_source = self._escape(source)
             sched_str = f"'{scheduled_for}'" if scheduled_for else "NULL"
 
-            duckdb.sql(f"""
-                CREATE OR REPLACE TABLE memory_temp AS
-                SELECT * FROM read_parquet('{self.db_path}');
-            """)
-
-            duckdb.sql(f"""
-                INSERT INTO memory_temp (
+            self.con.execute(f"""
+                INSERT INTO memory (
                     id, text, memory_type, created_at, last_accessed,
                     importance, scheduled_for, status, source
                 )
@@ -210,24 +106,23 @@ class MemoryStorage:
                     {sched_str}, NULL, '{escaped_source}'
                 );
             """)
-            duckdb.sql(f"COPY memory_temp TO '{self.db_path}' (FORMAT 'parquet', OVERWRITE TRUE);")
 
-        # 2️⃣ Generate embedding + update vector store (no DB lock needed)
+        # 2️⃣ Generate embedding + update vector store
+        # Note: Vector store update is still direct for now, but persistence happens at Interface level
         try:
             vec = self.embedder.embed(text)
             self.vector_store.add(new_id, text, vec, {"memory_type": memory_type, "source": source})
-            self.vector_store.save()
-            print(f"🧩 Embedded + stored memory ({source}): {text[:50]}...")
+            print(f"🧩 Embedded memory ({source}): {text[:50]}...")
         except Exception as e:
             print(f"[WARN] Could not embed text: {e}")
 
         return new_id
 
     # ------------------------------------------------------------------
-    def get_all_memories(self):
+    def get_all_memories(self) -> pd.DataFrame:
         with GLOBAL_DUCKDB_LOCK:  # 🔒
             try:
-                return duckdb.sql(f"SELECT * FROM read_parquet('{self.db_path}')").df()
+                return self.con.execute("SELECT * FROM memory").df()
             except Exception as e:
                 print(f"[MemoryStorage] Error reading memories: {e}")
                 return pd.DataFrame()
@@ -236,13 +131,12 @@ class MemoryStorage:
     def search_memory(self, query_text: str):
         with GLOBAL_DUCKDB_LOCK:  # 🔒
             if not query_text or not str(query_text).strip():
-                return duckdb.sql(f"SELECT * FROM read_parquet('{self.db_path}') LIMIT 0").fetchdf()
+                return pd.DataFrame()
             escaped_query = self._escape(query_text)
-            df = duckdb.sql(f"""
-                SELECT * FROM read_parquet('{self.db_path}')
+            return self.con.execute(f"""
+                SELECT * FROM memory
                 WHERE text ILIKE '%{escaped_query}%'
-            """).fetchdf()
-            return df
+            """).df()
 
     # ------------------------------------------------------------------
     def search_text(self, query: str, top_k: int = 3):
@@ -266,20 +160,16 @@ class MemoryStorage:
     def delete_memory(self, phrase: str):
         with GLOBAL_DUCKDB_LOCK:  # 🔒
             escaped = self._escape(phrase)
-            duckdb.sql(f"""
-                CREATE OR REPLACE TABLE memory_temp AS
-                SELECT * FROM read_parquet('{self.db_path}')
-                WHERE text NOT ILIKE '%{escaped}%';
-            """)
-            duckdb.sql(f"""
-                COPY memory_temp TO '{self.db_path}' (FORMAT PARQUET, OVERWRITE TRUE);
+            self.con.execute(f"""
+                DELETE FROM memory
+                WHERE text ILIKE '%{escaped}%';
             """)
         return True
 
     # ------------------------------------------------------------------
     def update_memory(self, uid: str, new_text: str):
         """
-        Update memory text by ID in DuckDB and trigger vector index rebuild.
+        Update memory text by ID in DuckDB.
         """
         if not uid or not new_text:
             print("[MemoryStorage] Invalid update parameters.")
@@ -289,9 +179,8 @@ class MemoryStorage:
             escaped_text = self._escape(new_text)
 
             # Check if ID exists first
-            # Use parameterized query to prevent SQL injection on UID (even if unlikely)
             try:
-                exists = duckdb.sql(f"SELECT count(*) FROM read_parquet('{self.db_path}') WHERE id=?", params=[uid]).fetchone()[0]
+                exists = self.con.execute("SELECT count(*) FROM memory WHERE id=?", [uid]).fetchone()[0]
             except Exception as e:
                  print(f"[MemoryStorage] Error checking memory existence: {e}")
                  return False
@@ -300,31 +189,11 @@ class MemoryStorage:
                 print(f"[MemoryStorage] Memory ID {uid} not found.")
                 return False
 
-            # Perform Update
-            # Note: DuckDB python API for UPDATE might not support params directly in execute/sql in all versions the same way
-            # But for simple string interpolation of UID we can just be careful.
-            # However, 'id' is internal UUID, so risk is low. But 'text' is user input.
-            # Ideally we use params but copying table logic is complex with params in one go.
-            # Keeping current logic but validating UID is alphanumeric/UUID-like could be safer.
-
-            duckdb.sql(f"""
-                CREATE OR REPLACE TABLE memory_temp AS
-                SELECT * FROM read_parquet('{self.db_path}');
-            """)
-
-            # Using f-string for id but we should ensure text is safe.
-            # self._escape(text) handles single quotes.
-            duckdb.sql(f"""
-                UPDATE memory_temp
+            self.con.execute(f"""
+                UPDATE memory
                 SET text = '{escaped_text}', last_accessed = '{datetime.utcnow().isoformat()}'
                 WHERE id = '{uid}';
             """)
-            duckdb.sql(f"COPY memory_temp TO '{self.db_path}' (FORMAT PARQUET, OVERWRITE TRUE);")
 
         print(f"📝 Updated memory {uid} in storage.")
-
-        # Rebuild vector index (expensive but correct for now)
-        # Ideally we would update just the one entry in FAISS, but that's complex without ID mapping
-        self._rebuild_vector_index_if_needed(force=True)
-
         return True

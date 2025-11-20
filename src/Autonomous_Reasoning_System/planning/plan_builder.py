@@ -6,7 +6,6 @@ Creates and manages goal–plan–step hierarchies for Tyrone.
 This module handles structure and progress tracking only,
 leaving execution control to the CoreLoop or Scheduler.
 """
-from unittest import result
 from Autonomous_Reasoning_System.memory.singletons import get_memory_storage
 from Autonomous_Reasoning_System.llm.reflection_interpreter import ReflectionInterpreter
 from Autonomous_Reasoning_System.llm.plan_reasoner import PlanReasoner
@@ -321,5 +320,3 @@ class PlanBuilder:
 
         # --- Final fallback ---
         return ["Define objective", "Execute objective", "Verify outcome"]
-
-

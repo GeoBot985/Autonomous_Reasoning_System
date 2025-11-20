@@ -25,18 +25,12 @@ class Router:
         # Default fallback pipeline
         self.fallback_pipeline = ["answer_question"]
 
-    def route(self, text: str, pipeline_override: Optional[List[str]] = None) -> Dict[str, Any]:
+    def resolve(self, text: str) -> Dict[str, Any]:
         """
-        Analyzes intent and executes the corresponding tool pipeline.
-        Args:
-            text: The user input string.
-            pipeline_override: Optional list of tool names to force execute, bypassing intent analysis pipeline selection.
+        Analyzes intent and determines the pipeline without executing it.
+        Returns a dictionary containing intent, entities, and the selected pipeline.
         """
-        logger.info(f"Router received input: {text}")
-
         # 1. Analyze Intent
-        # We execute "analyze_intent" as a tool via the dispatcher.
-        # We assume this tool is registered and returns a dict with "intent" key.
         analysis_result = self.dispatcher.dispatch("analyze_intent", arguments={"text": text})
 
         intent = "unknown"
@@ -50,52 +44,45 @@ class Router:
                 entities = analysis_data.get("entities", {})
         else:
             logger.warning(f"Intent analysis failed: {analysis_result['errors']}")
-            # If intent analysis fails, we might still want to proceed with a fallback or unknown intent
-
-        logger.info(f"Routing intent: {intent}")
 
         # 2. Select Pipeline
-        if pipeline_override:
-            pipeline = pipeline_override
-            logger.info(f"Using overridden pipeline: {pipeline}")
-        else:
-            pipeline = self._select_pipeline(intent)
-            logger.info(f"Selected pipeline: {pipeline}")
+        pipeline = self._select_pipeline(intent)
 
-        # 3. Execute Pipeline
-        # We hand the plan (sequence of tools) to the dispatcher one by one.
-        results = []
-        # Initial context includes the original input and analysis
-        context = {
-            "original_input": text,
+        return {
             "intent": intent,
             "entities": entities,
-            "analysis": analysis_data
+            "analysis_data": analysis_data,
+            "pipeline": pipeline
         }
 
-        previous_output = text # Default input for first tool
+    def execute_pipeline(self, pipeline: List[str], initial_input: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Executes the given pipeline of tools.
+        """
+        results = []
+        context = context or {}
+        previous_output = initial_input
+
+        # Update context with input
+        context.update({"original_input": initial_input})
+        entities = context.get("entities", {})
 
         for i, tool_name in enumerate(pipeline):
-            # Determine arguments for the tool
-            # Use previous_output. For the first step, it is 'text'.
-
             step_args = {
                 "text": previous_output,
                 "entities": entities,
                 "context": context
             }
 
-            # Special handling: if intent is 'plan' and tool is 'plan_steps', it might need 'goal'
-            if intent == "plan" and tool_name == "plan_steps":
-                step_args["goal"] = text
+            # Special handling: if tool is 'plan_steps', it might need 'goal'
+            if tool_name == "plan_steps":
+                step_args["goal"] = initial_input
 
             logger.info(f"Executing tool '{tool_name}' (step {i+1})")
             step_result = self.dispatcher.dispatch(tool_name, arguments=step_args)
             results.append(step_result)
 
             if step_result["status"] == "success":
-                # Update previous_output for the next step in the chain
-                # If the tool returns a string, use it. If dict, try to find a relevant field.
                 data = step_result["data"]
                 if isinstance(data, str):
                     previous_output = data
@@ -105,14 +92,50 @@ class Router:
                     previous_output = str(data)
             else:
                 logger.error(f"Tool '{tool_name}' failed: {step_result['errors']}")
-                # Stop pipeline on failure
                 break
+
+        return {
+            "pipeline": pipeline,
+            "results": results,
+            "final_output": previous_output
+        }
+
+    def route(self, text: str, pipeline_override: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Analyzes intent and executes the corresponding tool pipeline.
+        This preserves backward compatibility.
+        """
+        logger.info(f"Router received input: {text}")
+
+        # Always analyze intent first to maintain context
+        resolve_result = self.resolve(text)
+        intent = resolve_result["intent"]
+        entities = resolve_result["entities"]
+        analysis_data = resolve_result["analysis_data"]
+
+        if pipeline_override:
+            pipeline = pipeline_override
+            intent = "override" # Or keep original intent? The test implies we just want the analysis call.
+            # But if we override, we probably want to suppress the original intent driving the pipeline.
+            # Let's keep intent as "override" or just use the override pipeline.
+            logger.info(f"Using overridden pipeline: {pipeline}")
+        else:
+            pipeline = resolve_result["pipeline"]
+            logger.info(f"Routing intent: {intent}, Selected pipeline: {pipeline}")
+
+        context = {
+            "intent": intent,
+            "entities": entities,
+            "analysis": analysis_data
+        }
+
+        execution_result = self.execute_pipeline(pipeline, text, context)
 
         return {
             "intent": intent,
             "pipeline": pipeline,
-            "results": results,
-            "final_output": previous_output
+            "results": execution_result["results"],
+            "final_output": execution_result["final_output"]
         }
 
     def _select_pipeline(self, intent: str) -> List[str]:

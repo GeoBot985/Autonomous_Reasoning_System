@@ -30,6 +30,7 @@ class PersistenceService:
 
         self.data_dir = Path(data_dir)
         self.memory_path = self.data_dir / "memory.parquet"
+        self.goals_path = self.data_dir / "goals.parquet"
         self.episodes_path = self.data_dir / "episodes.parquet"
         self.vector_index_path = self.data_dir / "vector_index.faiss"
         self.vector_meta_path = self.data_dir / "vector_meta.pkl"
@@ -61,6 +62,30 @@ class PersistenceService:
             print(f"[Persistence] Saved deterministic memory to {self.memory_path}")
         except Exception as e:
             print(f"[Persistence] Error saving deterministic memory: {e}")
+
+    # ------------------------------------------------------------------
+    # Goals
+    # ------------------------------------------------------------------
+    def load_goals(self) -> pd.DataFrame:
+        """Load goals from parquet."""
+        if self.goals_path.exists():
+            try:
+                return pd.read_parquet(self.goals_path)
+            except Exception as e:
+                print(f"[Persistence] Error loading goals: {e}")
+
+        # Return empty DataFrame with expected schema
+        return pd.DataFrame(columns=[
+            "id", "text", "priority", "status", "steps", "metadata", "created_at", "updated_at"
+        ])
+
+    def save_goals(self, df: pd.DataFrame):
+        """Save goals to parquet."""
+        try:
+            df.to_parquet(self.goals_path)
+            print(f"[Persistence] Saved goals to {self.goals_path}")
+        except Exception as e:
+            print(f"[Persistence] Error saving goals: {e}")
 
     # ------------------------------------------------------------------
     # Episodic Memory

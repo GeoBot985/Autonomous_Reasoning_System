@@ -15,6 +15,7 @@ from Autonomous_Reasoning_System.planning.plan_executor import PlanExecutor
 from Autonomous_Reasoning_System.control.attention_manager import attention
 from Autonomous_Reasoning_System.tools.standard_tools import register_tools
 from Autonomous_Reasoning_System.llm.context_adapter import ContextAdapter
+from Autonomous_Reasoning_System.control.goal_manager import GoalManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,19 +34,21 @@ class CoreLoop:
         self.plan_builder = PlanBuilder()
         self.context_adapter = ContextAdapter()
 
+        # 4. Initialize Control & Execution
+        self.router = Router(self.dispatcher)
+        self.plan_executor = PlanExecutor(self.plan_builder, self.dispatcher, self.router)
+        self.goal_manager = GoalManager(self.memory, self.plan_builder, self.dispatcher, self.router)
+
         # 3. Register Tools
         components = {
             "intent_analyzer": self.intent_analyzer,
             "memory": self.memory,
             "reflector": self.reflector,
             "plan_builder": self.plan_builder,
-            "context_adapter": self.context_adapter
+            "context_adapter": self.context_adapter,
+            "goal_manager": self.goal_manager
         }
         register_tools(self.dispatcher, components)
-
-        # 4. Initialize Control & Execution
-        self.router = Router(self.dispatcher)
-        self.plan_executor = PlanExecutor(self.plan_builder, self.dispatcher, self.router)
 
         # 5. Start Background Tasks
         start_heartbeat_with_plans(
@@ -56,6 +59,7 @@ class CoreLoop:
     def run_once(self, text: str):
         """
         Executes the Full Reasoning Loop:
+        0. Check Goals
         1. Router (resolve pipeline)
         2. Plan Builder (create plan)
         3. Dispatcher (execute plan via PlanExecutor)
@@ -65,6 +69,17 @@ class CoreLoop:
         """
         print(f"\n[CORE LOOP] Received input: {text}")
         start_time = time.time()
+
+        # --- Step 0: Check Goals (Periodic/Background) ---
+        # We do this at the start of an interaction to simulate "thinking about long-term goals"
+        # In a real agent, this would happen on a clock or when idle.
+        try:
+             goal_status = self.goal_manager.check_goals()
+             if goal_status and "No actions needed" not in goal_status:
+                 print(f"[GOALS] {goal_status}")
+                 # Optionally, we could feed this into the context or decide to prioritize it
+        except Exception as e:
+             print(f"[GOALS] Error checking goals: {e}")
 
         # --- Step 1: Use Router to determine pipeline ---
         route_decision = self.router.resolve(text)

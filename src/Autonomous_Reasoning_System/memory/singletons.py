@@ -23,12 +23,12 @@ def get_embedding_model():
     return _embedding_model
 
 # Modified to allow injection of loaded data or returning None if not initialized
-def get_memory_storage(initial_df=None):
+def get_memory_storage(initial_df=None, initial_goals_df=None):
     global _memory_storage
     if _memory_storage is None:
         print("Initializing MemoryStorage ONCE (singleton)")
         from .storage import MemoryStorage  # ← deferred import!
-        _memory_storage = MemoryStorage(initial_df=initial_df)
+        _memory_storage = MemoryStorage(initial_df=initial_df, initial_goals_df=initial_goals_df)
     return _memory_storage
 
 # Modified to allow injection of loaded data or returning None if not initialized

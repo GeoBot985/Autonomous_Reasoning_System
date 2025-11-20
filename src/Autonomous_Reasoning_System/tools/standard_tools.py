@@ -16,6 +16,7 @@ def register_tools(dispatcher, components: Dict[str, Any]):
             - "plan_builder"
             - "deterministic_responder" (optional, if not present, will be created)
             - "context_adapter" (optional)
+            - "goal_manager" (optional)
     """
 
     # 1. Analyze Intent
@@ -135,6 +136,43 @@ def register_tools(dispatcher, components: Dict[str, Any]):
         "answer_question",
         answer_question_handler,
         schema={"text": {"type": str, "required": True}}
+    )
+
+    # 9. Goal Management
+    def create_goal_handler(text: str, priority: int = 1, **kwargs):
+        goal_manager = components.get("goal_manager")
+        if goal_manager:
+            return goal_manager.create_goal(text, priority=priority)
+        return "Goal Manager not available."
+
+    dispatcher.register_tool(
+        "create_goal",
+        create_goal_handler,
+        schema={
+            "text": {"type": str, "required": True},
+            "priority": {"type": int, "required": False}
+        }
+    )
+
+    def list_goals_handler(**kwargs):
+        goal_manager = components.get("goal_manager")
+        if goal_manager:
+             # We access memory directly or via goal manager helper
+             # GoalManager doesn't expose list directly, but memory does
+             active_goals = goal_manager.memory.get_active_goals()
+             if active_goals.empty:
+                 return "No active goals."
+
+             summary = []
+             for _, row in active_goals.iterrows():
+                 summary.append(f"[{row['id'][:8]}] {row['text']} (Status: {row['status']})")
+             return "\n".join(summary)
+        return "Goal Manager not available."
+
+    dispatcher.register_tool(
+        "list_goals",
+        list_goals_handler,
+        schema={}
     )
 
     logger.info("Standard tools registered successfully.")

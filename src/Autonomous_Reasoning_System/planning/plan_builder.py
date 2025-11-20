@@ -100,10 +100,10 @@ class Goal:
 # ---------------------------------------------------------------------
 
 class PlanBuilder:
-    def __init__(self, reflector: ReflectionInterpreter | None = None):
+    def __init__(self, reflector: ReflectionInterpreter | None = None, memory_storage=None):
         self.active_goals: Dict[str, Goal] = {}
         self.active_plans: Dict[str, Plan] = {}
-        self.memory = get_memory_storage()
+        self.memory = memory_storage if memory_storage else get_memory_storage()
         self.reflector = reflector or ReflectionInterpreter()
         self.reasoner = PlanReasoner() 
 

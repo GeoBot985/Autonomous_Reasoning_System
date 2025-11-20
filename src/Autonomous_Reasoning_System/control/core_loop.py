@@ -80,7 +80,11 @@ class CoreLoop:
         self.memory.store(final_summary)
         print(f"[SUMMARY] {final_summary}")
 
-        return {"summary": final_reply}
+        return {
+            "summary": final_reply,
+            "decision": decision,
+            "reflection_data": reflection_data
+        }
 
     def run_interactive(self):
         self.running = True

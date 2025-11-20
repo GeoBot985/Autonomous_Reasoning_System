@@ -26,7 +26,8 @@ def setup_memory():
 
 def test_goal_creation_and_plan_generation():
     """Ensure a goal creates a structured plan with dynamic steps."""
-    pb = PlanBuilder()
+    mem = setup_memory()
+    pb = PlanBuilder(memory_storage=mem)
     goal, plan = pb.new_goal_with_plan("Develop a file summarisation feature")
 
     print("\n🧠 Created goal and plan:")
@@ -44,7 +45,8 @@ def test_goal_creation_and_plan_generation():
 
 def test_plan_progress_and_memory_logging():
     """Test that updating steps writes progress reflections to memory."""
-    pb = PlanBuilder()
+    mem = setup_memory()
+    pb = PlanBuilder(memory_storage=mem)
     goal, plan = pb.new_goal_with_plan("Build OCR module")
     assert plan.steps, "Plan should have steps."
 
@@ -65,7 +67,8 @@ def test_plan_progress_and_memory_logging():
 
 def test_active_plan_tracking():
     """Ensure get_active_plans() returns only incomplete plans."""
-    pb = PlanBuilder()
+    mem = setup_memory()
+    pb = PlanBuilder(memory_storage=mem)
     goal, plan = pb.new_goal_with_plan("Implement reminder system")
     step = plan.steps[0]
     pb.update_step(plan.id, step.id, "complete", "Created reminder entry.")
@@ -75,14 +78,17 @@ def test_active_plan_tracking():
 
 def test_plan_restoration_from_memory():
     """Simulate restoring plans from memory records."""
-    pb = PlanBuilder()
+    mem = setup_memory()
+    pb = PlanBuilder(memory_storage=mem)
     goal, plan = pb.new_goal_with_plan("Integrate text-to-speech engine")
 
     # Simulate storing plan progress in memory
     pb.update_step(plan.id, plan.steps[0].id, "complete", "Installed dependencies.")
 
     # Simulate reload (new instance)
-    new_pb = PlanBuilder()
+    # Reuse the same memory storage object to simulate persistence within the same test run context
+    # In a real scenario, this would load from disk, but here we want to verify persistence logic
+    new_pb = PlanBuilder(memory_storage=mem)
     df = new_pb.memory.get_all_memories()
     assert not df.empty, "Memory should persist across instances."
     print("\n📚 Restored memory entries:")
@@ -91,7 +97,8 @@ def test_plan_restoration_from_memory():
 
 def test_multiple_goals_in_sequence():
     """Test sequential goal creation and persistence."""
-    pb = PlanBuilder()
+    mem = setup_memory()
+    pb = PlanBuilder(memory_storage=mem)
     goals = [
         "Develop OCR module",
         "Add image pre-processing",

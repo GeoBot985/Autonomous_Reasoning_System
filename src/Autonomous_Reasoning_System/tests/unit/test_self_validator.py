@@ -1,9 +1,13 @@
 # tests/test_self_validator.py
 from datetime import datetime
-from ..cognition.self_validator import SelfValidator
+from Autonomous_Reasoning_System.cognition.self_validator import SelfValidator
 
 
 def test_self_validator_basic():
+    # SelfValidator doesn't use external dependencies in __init__, so we don't need to patch anything
+    # unless it's importing something we haven't seen (checked code, it seems clean).
+    # The previous failure was because I patched 'get_memory_storage' which doesn't exist in that module.
+
     sv = SelfValidator()
 
     # Positive case

@@ -1,3 +1,4 @@
+import pytest
 from Autonomous_Reasoning_System.planning.plan_builder import PlanBuilder
 
 def test_goal_conditions():
@@ -8,6 +9,6 @@ def test_goal_conditions():
     print("Success:", goal.success_criteria)
     print("Failure:", goal.failure_criteria)
 
-if __name__ == "__main__":
-    test_goal_conditions()
-
+    assert goal.text == "Build OCR module"
+    assert hasattr(goal, "success_criteria")
+    assert hasattr(goal, "failure_criteria")

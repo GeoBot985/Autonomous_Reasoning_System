@@ -175,4 +175,76 @@ def register_tools(dispatcher, components: Dict[str, Any]):
         schema={}
     )
 
+    # --- NEW CONTROLLER TOOLS FOR FAMILIES ---
+
+    # 10. Handle Memory Ops (Unified)
+    def handle_memory_ops_handler(text: str, context: Dict[str, Any] = None, **kwargs):
+        # Check intent from context if available
+        intent = context.get("intent", "unknown") if context else "unknown"
+        memory = components.get("memory")
+
+        if not memory:
+            return "Memory component not available."
+
+        # Dispatch based on intent
+        if intent in ["store", "save", "remind", "remember", "memorize"]:
+             memory.store(f"Stored fact: {text}", memory_type="episodic", importance=1.0)
+             return f"Stored: {text}"
+        elif intent in ["search", "recall", "find", "lookup"]:
+             results = memory.retrieve(text, k=3)
+             return results
+        else:
+             # Default to search if unknown intent in memory family
+             results = memory.retrieve(text, k=3)
+             return results
+
+    dispatcher.register_tool(
+        "handle_memory_ops",
+        handle_memory_ops_handler,
+        schema={"text": {"type": str, "required": True}}
+    )
+
+    # 11. Handle Goal Ops (Unified)
+    def handle_goal_ops_handler(text: str, context: Dict[str, Any] = None, **kwargs):
+        intent = context.get("intent", "unknown") if context else "unknown"
+        goal_manager = components.get("goal_manager")
+
+        if not goal_manager:
+             return "Goal Manager not available."
+
+        if intent in ["list_goals", "goals"]:
+             # Reuse logic or call internal method
+             # Just calling the helper for now:
+             active_goals = goal_manager.memory.get_active_goals()
+             if active_goals.empty:
+                 return "No active goals."
+             summary = []
+             for _, row in active_goals.iterrows():
+                 summary.append(f"[{row['id'][:8]}] {row['text']} (Status: {row['status']})")
+             return "\n".join(summary)
+        else:
+             # Default to creating goal for other intents (create_goal, achieve, do, task, research, investigate, etc.)
+             return goal_manager.create_goal(text)
+
+    dispatcher.register_tool(
+        "handle_goal_ops",
+        handle_goal_ops_handler,
+        schema={"text": {"type": str, "required": True}}
+    )
+
+    # 12. Perform Self Analysis
+    def perform_self_analysis_handler(text: str, **kwargs):
+        reflector = components.get("reflector")
+        if reflector:
+             # We might want to check system status here
+             return reflector.interpret(f"Analyze system status and self: {text}")
+        return "Reflector not available."
+
+    dispatcher.register_tool(
+        "perform_self_analysis",
+        perform_self_analysis_handler,
+        schema={"text": {"type": str, "required": True}}
+    )
+
+
     logger.info("Standard tools registered successfully.")

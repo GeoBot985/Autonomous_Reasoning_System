@@ -84,23 +84,34 @@ class CoreLoop:
         # --- Step 1: Use Router to determine pipeline ---
         route_decision = self.router.resolve(text)
         intent = route_decision["intent"]
+        family = route_decision.get("family", "unknown")
         pipeline = route_decision["pipeline"]
-        print(f"[ROUTER] Intent: {intent} | Pipeline: {pipeline}")
+        print(f"[ROUTER] Intent: {intent} (Family: {family}) | Pipeline: {pipeline}")
 
         # --- Step 2: Build a plan ---
         # If intent requires complex planning, we decompose.
         # Otherwise, we wrap the simple pipeline/input as a single-step plan.
-        if intent == "plan" or intent == "complex_task":
+        if intent == "plan" or intent == "complex_task" or family == "planning":
+            # For planning family, we use the tool provided in pipeline (plan_steps) to get steps?
+            # Or we delegate to PlanBuilder directly.
+            # Let's stick to plan_builder directly for now as per original logic, but enhanced.
             goal, plan = self.plan_builder.new_goal_with_plan(text)
             print(f"[PLANNER] Created multi-step plan: {plan.id}")
         else:
             # Simple execution: Treat the original input as the step description
             # The PlanExecutor will route this step, effectively executing the pipeline determined by Router
             goal = self.plan_builder.new_goal(text)
+            # We implicitly use the pipeline selected by the router for this "step"
             plan = self.plan_builder.build_plan(goal, [text])
             print(f"[PLANNER] Created single-step execution plan: {plan.id}")
 
         # --- Step 3: Execute via Dispatcher (PlanExecutor uses Dispatcher/Router) ---
+        # Note: PlanExecutor calls router.route(step_description) internally if no plan exists?
+        # No, PlanExecutor executes steps. If step description is just the input text,
+        # PlanExecutor's _execute_step calls `router.route(step.description)`.
+        # So the Router is called AGAIN inside PlanExecutor.
+        # This is redundant but fine for now. The first call was just to visualize/decide IF we need a plan.
+
         execution_result = self.plan_executor.execute_plan(plan.id)
 
         final_output = ""
@@ -134,7 +145,7 @@ class CoreLoop:
         # --- Step 5: Update Memory (Episodic + Semantic) ---
         # The tools likely updated specific memories.
         # We add an episodic memory of this interaction cycle.
-        interaction_summary = f"User: {text} | Intent: {intent} | Result: {final_output}"
+        interaction_summary = f"User: {text} | Intent: {intent} | Family: {family} | Result: {final_output}"
         self.memory.store(interaction_summary, memory_type="episodic", importance=0.5)
         print("[MEMORY] Interaction stored.")
 

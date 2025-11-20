@@ -8,16 +8,12 @@ class VectorStore:
     """
     Manages FAISS index for semantic similarity search.
     Stores metadata alongside the index for recall and persistence.
+    Persistence is handled by MemoryInterface via PersistenceService.
     """
-    def __init__(self, dim=384, path="data/vector_index.faiss", meta_path="data/vector_meta.pkl"):
+    def __init__(self, dim=384, index=None, metadata=None):
         self.dim = dim
-        self.path = path
-        self.meta_path = meta_path
-        self.index = faiss.IndexFlatIP(dim)   # cosine similarity (after normalization)
-        self.metadata = []
-
-        if os.path.exists(self.path) and os.path.exists(self.meta_path):
-            self.load()
+        self.index = index if index is not None else faiss.IndexFlatIP(dim)   # cosine similarity (after normalization)
+        self.metadata = metadata if metadata is not None else []
 
     def add(self, uid: str, text: str, vector: np.ndarray, meta: dict = None):
         if vector.ndim == 1:
@@ -40,13 +36,7 @@ class VectorStore:
                 results.append(item)
         return results
 
-    def save(self):
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        faiss.write_index(self.index, self.path)
-        with open(self.meta_path, "wb") as f:
-            pickle.dump(self.metadata, f)
-
-    def load(self):
-        self.index = faiss.read_index(self.path)
-        with open(self.meta_path, "rb") as f:
-            self.metadata = pickle.load(f)
+    def reset(self):
+        """Clear the index and metadata."""
+        self.index = faiss.IndexFlatIP(self.dim)
+        self.metadata = []

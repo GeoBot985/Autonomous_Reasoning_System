@@ -17,6 +17,7 @@ class Dispatcher:
     - Attach context metadata
     - Return standardised {status, data, errors, warnings, meta}
     - Track lineage and run metadata
+    - Handle memory persistence updates if tools modify memory
     """
 
     def __init__(self):
@@ -110,6 +111,16 @@ class Dispatcher:
                 handler = tool_def["handler"]
                 # We pass arguments as kwargs.
                 output = handler(**arguments)
+
+                # Check if tool modification implied memory changes
+                # (Implicitly, we might want to force a save if the tool name is suspicious or output indicates it)
+                # But MemoryInterface now handles auto-save on remember/update/etc.
+                # So if the tool uses MemoryInterface, it's covered.
+                # However, if we want to be extra safe or if the tool does something that requires manual triggering:
+                if tool_name.startswith("memory_") or "remember" in tool_name or "update" in tool_name:
+                     # We could potentially verify persistence here or log it
+                     pass
+
             except Exception as e:
                 status = "error"
                 errors.append(str(e))

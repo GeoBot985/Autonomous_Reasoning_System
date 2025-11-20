@@ -1,10 +1,10 @@
 # Autonomous_Reasoning_System/memory/episodes.py
 
 import duckdb
-import os
+import pandas as pd
 from datetime import datetime
 from uuid import uuid4
-import numpy as np
+import threading
 
 from Autonomous_Reasoning_System.memory.singletons import get_embedding_model
 
@@ -13,20 +13,18 @@ class EpisodicMemory:
     """
     Manages episodes: coherent clusters of related memories.
     Each episode can be summarized and semantically recalled.
+    Persistence is handled by MemoryInterface via PersistenceService.
     """
 
-    def __init__(self, db_path="data/episodes.parquet"):
-        self.db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    def __init__(self, initial_df: pd.DataFrame = None):
         self.embedder = get_embedding_model()
-        self._ensure_table()
         self.active_episode_id = None
 
-    # ------------------------------------------------------------------
-    def _ensure_table(self):
-        """Create the episodes table if it doesn't exist."""
-        if not os.path.exists(self.db_path):
-            duckdb.sql("""
+        # Initialize in-memory connection
+        self.con = duckdb.connect(database=':memory:')
+
+        if initial_df is None or initial_df.empty:
+             self.con.execute("""
                 CREATE TABLE episodes (
                     episode_id VARCHAR,
                     start_time TIMESTAMP,
@@ -36,14 +34,19 @@ class EpisodicMemory:
                     vector BLOB
                 )
             """)
-            duckdb.sql(f"COPY episodes TO '{self.db_path}' (FORMAT PARQUET)")
         else:
-            duckdb.sql(f"""
-                CREATE OR REPLACE TABLE episodes AS
-                SELECT * FROM read_parquet('{self.db_path}')
-            """)
+            self.con.register('initial_episodes', initial_df)
+            self.con.execute("CREATE TABLE episodes AS SELECT * FROM initial_episodes")
+            self.con.unregister('initial_episodes')
 
-        duckdb.sql(f"COPY (SELECT * FROM episodes) TO '{self.db_path}' (FORMAT PARQUET)")
+            # Restore active episode if it was still open (end_time is NULL)
+            # (Optional logic, depends if we want to resume sessions)
+            # For now, we start fresh or let user resume manually,
+            # but let's check if there's an open episode.
+            res = self.con.execute("SELECT episode_id FROM episodes WHERE end_time IS NULL ORDER BY start_time DESC LIMIT 1").fetchone()
+            if res:
+                self.active_episode_id = res[0]
+                print(f"[Episodic] Resuming active episode: {self.active_episode_id}")
 
     # ------------------------------------------------------------------
     def begin_episode(self):
@@ -55,19 +58,13 @@ class EpisodicMemory:
         self.active_episode_id = str(uuid4())
         now = datetime.utcnow().isoformat()
 
-        duckdb.sql(f"""
-            CREATE OR REPLACE TABLE episodes_temp AS
-            SELECT * FROM read_parquet('{self.db_path}');
-        """)
-
-        duckdb.sql(f"""
-            INSERT INTO episodes_temp (
+        self.con.execute(f"""
+            INSERT INTO episodes (
                 episode_id, start_time, end_time, summary, importance, vector
             )
             VALUES ('{self.active_episode_id}', '{now}', NULL, NULL, 0.5, NULL);
         """)
 
-        duckdb.sql(f"COPY episodes_temp TO '{self.db_path}' (FORMAT PARQUET, OVERWRITE TRUE);")
         print(f"🎬 Started new episode: {self.active_episode_id}")
         return self.active_episode_id
 
@@ -80,21 +77,16 @@ class EpisodicMemory:
 
         end_time = datetime.utcnow().isoformat()
         vec = self.embedder.embed(summary_text).tobytes()
+        escaped_summary = summary_text.replace("'", "''")
 
-        duckdb.sql(f"""
-            CREATE OR REPLACE TABLE episodes_temp AS
-            SELECT * FROM read_parquet('{self.db_path}');
-        """)
-
-        duckdb.sql(f"""
-            UPDATE episodes_temp
+        self.con.execute(f"""
+            UPDATE episodes
             SET end_time = '{end_time}',
-                summary = '{summary_text.replace("'", "''")}',
+                summary = '{escaped_summary}',
                 vector = '{vec.hex()}'
             WHERE episode_id = '{self.active_episode_id}';
         """)
 
-        duckdb.sql(f"COPY episodes_temp TO '{self.db_path}' (FORMAT PARQUET, OVERWRITE TRUE);")
         print(f"🏁 Ended episode {self.active_episode_id}")
         self.active_episode_id = None
 
@@ -104,10 +96,13 @@ class EpisodicMemory:
         Summarize all episodes for today using a provided LLM summarizer function.
         """
         today = datetime.utcnow().date()
-        df = duckdb.sql(f"""
-            SELECT * FROM read_parquet('{self.db_path}')
-            WHERE start_time::DATE = '{today}'
-        """).df()
+        try:
+            df = self.con.execute(f"""
+                SELECT * FROM episodes
+                WHERE start_time::DATE = '{today}'
+            """).df()
+        except Exception:
+             return None
 
         if df.empty:
             print("No episodes to summarize today.")
@@ -124,4 +119,8 @@ class EpisodicMemory:
 
     # ------------------------------------------------------------------
     def list_episodes(self):
-        return duckdb.sql(f"SELECT * FROM read_parquet('{self.db_path}') ORDER BY start_time DESC").df()
+        return self.con.execute("SELECT * FROM episodes ORDER BY start_time DESC").df()
+
+    # ------------------------------------------------------------------
+    def get_all_episodes(self) -> pd.DataFrame:
+        return self.con.execute("SELECT * FROM episodes").df()

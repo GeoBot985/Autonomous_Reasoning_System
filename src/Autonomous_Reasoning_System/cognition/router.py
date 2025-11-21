@@ -55,7 +55,8 @@ class Router:
             return {
                 "intent": "fact_stored",
                 "pipeline": ["context_adapter"],
-                "reason": "Direct personal fact assertion — stored with max importance"
+                "reason": "Direct personal fact assertion — stored with max importance",
+                "response_override": "Got it. I've noted that fact."
             }
         if lower.startswith("remember") or "please remember" in lower or "just remember" in lower:
             # IMMEDIATELY store the raw user message as a sacred personal fact
@@ -68,7 +69,8 @@ class Router:
                 "intent": "fact_stored",
                 "family": "memory",
                 "pipeline": ["context_adapter"],
-                "reason": "Direct personal fact storage triggered"
+                "reason": "Direct personal fact storage triggered",
+                "response_override": "Understood. I've stored that information."
             }
 
         if re.search(r"\b(learn|remember|recall|quantization|moondream|visionassist)\b", q):

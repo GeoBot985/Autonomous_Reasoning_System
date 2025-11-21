@@ -147,61 +147,43 @@ class CoreLoop:
         pipeline = route_decision["pipeline"]
         logger.debug(f"[ROUTER] Intent: {intent} (Family: {family}) | Pipeline: {pipeline}")
 
-        # --- Step 2: Build a plan ---
-        # If intent requires complex planning, we decompose.
-        # Otherwise, we wrap the simple pipeline/input as a single-step plan.
-        if intent == "plan" or intent == "complex_task" or family == "planning":
-            # For planning family, we use the tool provided in pipeline (plan_steps) to get steps?
-            # Or we delegate to PlanBuilder directly.
-            # Let's stick to plan_builder directly for now as per original logic, but enhanced.
-            goal, plan = self.plan_builder.new_goal_with_plan(text, plan_id=plan_id)
-            logger.debug(f"[PLANNER] Created multi-step plan: {plan.id}")
-            self._broadcast_thought(plan.id, f"Plan created with {len(plan.steps)} steps.")
+        response_override = route_decision.get("response_override")
+        if response_override:
+            final_output = response_override
+            status = "complete"
+            plan = None
         else:
-            # Simple execution: Treat the original input as the step description
-            # The PlanExecutor will route this step, effectively executing the pipeline determined by Router
-            goal = self.plan_builder.new_goal(text)
-            # We implicitly use the pipeline selected by the router for this "step"
-            plan = self.plan_builder.build_plan(goal, [text], plan_id=plan_id)
-            logger.debug(f"[PLANNER] Created single-step execution plan: {plan.id}")
-            self._broadcast_thought(plan.id, "Single-step plan created.")
-
-        # --- Step 3: Execute via Dispatcher (PlanExecutor uses Dispatcher/Router) ---
-        # Note: PlanExecutor calls router.route(step.description) internally if no plan exists?
-        # No, PlanExecutor executes steps. If step description is just the input text,
-        # PlanExecutor's _execute_step calls `router.route(step.description)`.
-        # So the Router is called AGAIN inside PlanExecutor.
-        # This is redundant but fine for now. The first call was just to visualize/decide IF we need a plan.
-
-        execution_result = self.plan_executor.execute_plan(plan.id)
-
-        final_output = ""
-        status = execution_result.get("status")
-
-        if status == "complete":
-            # Extract summary or final output
-            # PlanExecutor returns summary in data usually
-            summary = execution_result.get("summary", {})
-            if isinstance(summary, dict):
-                 # If it's a plan summary, we might want the last step's output
-                 # But PlanExecutor logic stores results in memory/step history.
-                 # We can try to retrieve the result from the plan's last completed step.
-                 # Or use what PlanExecutor returns.
-                 pass
-
-            # For simple plans (single step), the result of that step is the answer.
-            # PlanExecutor doesn't return the raw output of the last step easily in the return dict.
-            # We must look at the plan steps.
-            if len(plan.steps) > 0:
-                last_step = plan.steps[-1]
-                final_output = last_step.result or "Done."
+            # --- Step 2: Build a plan ---
+            # If intent requires complex planning, we decompose.
+            # Otherwise, we wrap the simple pipeline/input as a single-step plan.
+            if intent == "plan" or intent == "complex_task" or family == "planning":
+                goal, plan = self.plan_builder.new_goal_with_plan(text, plan_id=plan_id)
+                logger.debug(f"[PLANNER] Created multi-step plan: {plan.id}")
+                self._broadcast_thought(plan.id, f"Plan created with {len(plan.steps)} steps.")
             else:
-                final_output = "Plan completed with no steps."
-        elif status == "suspended":
-             final_output = f"Plan suspended. {execution_result.get('message')}"
-        else:
-            final_output = f"Execution failed: {execution_result.get('errors')}"
-            logger.warning(f"[EXEC] Failed: {final_output}")
+                goal = self.plan_builder.new_goal(text)
+                plan = self.plan_builder.build_plan(goal, [text], plan_id=plan_id)
+                logger.debug(f"[PLANNER] Created single-step execution plan: {plan.id}")
+                self._broadcast_thought(plan.id, "Single-step plan created.")
+
+            # --- Step 3: Execute via Dispatcher (PlanExecutor uses Dispatcher/Router) ---
+            execution_result = self.plan_executor.execute_plan(plan.id)
+
+            final_output = ""
+            status = execution_result.get("status")
+
+            if status == "complete":
+                summary = execution_result.get("summary", {})
+                if len(plan.steps) > 0:
+                    last_step = plan.steps[-1]
+                    final_output = last_step.result or "Done."
+                else:
+                    final_output = "Plan completed with no steps."
+            elif status == "suspended":
+                 final_output = f"Plan suspended. {execution_result.get('message')}"
+            else:
+                final_output = f"Execution failed: {execution_result.get('errors')}"
+                logger.warning(f"[EXEC] Failed: {final_output}")
 
         # --- Step 4: Return output ---
         # (We prepare it here, returns at end)

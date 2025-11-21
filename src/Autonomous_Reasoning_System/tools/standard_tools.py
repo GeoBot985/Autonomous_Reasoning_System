@@ -222,19 +222,19 @@ def register_tools(dispatcher, components: Dict[str, Any]):
             return "Memory component not available."
 
         # Dispatch based on intent
-        if effective_intent in ["store", "save", "remind", "remember", "memorize"]:
-             memory.remember(
-                 text=f"Stored fact: {text}",
-                 metadata={"type": "personal_fact", "importance": 1.0, "source": "tool:handle_memory_ops"}
-             )
-             return f"Stored: {text}"
+        if effective_intent in ["store", "save", "remind", "remember", "memorize", "note"]:
+            memory.remember(
+                text=text.strip(),
+                metadata={"type": "personal_fact", "importance": 1.0, "source": "explicit_user_command"}
+            )
+            return f"Got it — I will remember: {text}"
         elif effective_intent in ["search", "recall", "find", "lookup"]:
-             results = memory.retrieve(text, k=3)
-             return _format_results(results)
+            results = memory.retrieve(text, k=3)
+            return _format_results(results)
         else:
-             # Default to search if unknown intent in memory family
-             results = memory.retrieve(text, k=3)
-             return _format_results(results)
+            # Default to search if unknown intent in memory family, but do not auto-store
+            results = memory.retrieve(text, k=3)
+            return _format_results(results)
 
     dispatcher.register_tool(
         "handle_memory_ops",

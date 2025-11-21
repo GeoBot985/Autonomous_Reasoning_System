@@ -56,6 +56,7 @@ class CoreLoop:
         self.reflector = ReflectionInterpreter(memory_storage=self.memory_storage, embedding_model=self.embedder)
         self.learner = LearningManager(memory_storage=self.memory_storage)
         self.confidence = ConfidenceManager(memory_storage=self.memory_storage)
+        self.last_response = None
 
         # Tools that don't need memory injection or self-initiate harmlessly
         self.intent_analyzer = IntentAnalyzer()
@@ -233,11 +234,12 @@ class CoreLoop:
 
         # User corrections get stored explicitly
         lowered_text = text.lower()
-        if any(term in lowered_text for term in ["no ", "wrong", "not "]):
-            self.memory.remember(
-                text=f"USER CORRECTION: {text} → previous answer was wrong",
-                metadata={"type": "correction", "importance": 1.0}
-            )
+        if any(term in lowered_text for term in ["no", "wrong", "actually", "not", "correction", "instead"]):
+            if getattr(self, "last_response", None):
+                self.memory.remember(
+                    text=f"USER CONTRADICTED: {self.last_response}",
+                    metadata={"type": "correction", "importance": 2.0}
+                )
 
         duration = time.time() - start_time
         Metrics().record_time("core_loop_duration", duration)
@@ -253,6 +255,7 @@ class CoreLoop:
         }
 
         self._broadcast_thought(plan.id, f"Plan status: {status}. Output: {final_output}")
+        self.last_response = final_output
         self._send_to_user(final_output)
         return result
 

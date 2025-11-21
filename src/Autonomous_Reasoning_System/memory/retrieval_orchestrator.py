@@ -144,4 +144,4 @@ class RetrievalOrchestrator:
         subset["score"] = subset.apply(score_row, axis=1)
         best = subset.sort_values("score", ascending=False).iloc[0]
         print(f"[🧩 EntityResolution] '{name}' → best match score={best['score']:.3f}")
-        return best["text"]
+        return name

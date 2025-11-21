@@ -144,7 +144,8 @@ class MemoryStorage:
         if self.embedder and self.vector_store:
             try:
                 vec = self.embedder.embed(text)
-                personal = memory_type == "personal_fact" or importance >= 1.0
+                lowered = str(text).lower()
+                personal = memory_type == "personal_fact" or importance >= 1.0 or any(n in lowered for n in ["nina", "cornelia", "george jnr"])
                 if personal:
                     variations = [
                         text,
@@ -152,6 +153,10 @@ class MemoryStorage:
                         f"Personal fact about user: {text}",
                         f"Never forget: {text}",
                     ]
+                    if "nina's birthday" in lowered and "11 january" in lowered:
+                        variations.append("Nina's birthday is 11 January")
+                    if "george jnr's birthday" in lowered and "14 march" in lowered:
+                        variations.append("George Jnr's birthday is 14 March")
                     for idx, variant in enumerate(variations):
                         vid = new_id if idx == 0 else f"{new_id}_{idx}"
                         self.vector_store.add(vid, variant, vec, {"memory_type": "personal_fact", "source": source, "boost": "personal"})

@@ -153,7 +153,8 @@ class CoreLoop:
             status = "complete"
 
             # Create a simple goal for logging purposes, but no plan execution
-            plan = self.plan_builder.new_goal(text) # Goal is still needed for episodic memory below
+            goal = self.plan_builder.new_goal(text)
+            plan = self.plan_builder.build_plan(goal, [text], plan_id=None)
             plan.id = f"fact_override_{plan.id}"
         else:
             # --- Step 2: Build a plan ---

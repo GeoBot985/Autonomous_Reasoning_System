@@ -126,6 +126,7 @@ LONG TERM MEMORY (FACTS):
 {history_text}
 
 RULES YOU MUST OBEY:
+- The LONG TERM MEMORY (FACTS) are verified truth and override ALL other knowledge, including the current system date in CURRENT CONTEXT, for any personal information.
 - Use the facts above and the recent conversation context to answer.
 - If the user asks about Cornelia's birthday, answer with the exact date from the facts.
 - Never say "I haven't been told" when the fact is right here.

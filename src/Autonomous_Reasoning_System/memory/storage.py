@@ -40,8 +40,10 @@ class MemoryStorage:
         try:
             with self._write_lock:
                 self.con.execute("DELETE FROM goals WHERE status NOT IN ('completed', 'failed')")
+                # Ensure the cleanup targets the known bad fact
                 self.con.execute("DELETE FROM memory WHERE text LIKE '%November 21, 2025%' AND memory_type = 'episodic'")
                 try:
+                    # And from the vector index
                     self.con.execute("DELETE FROM vectors WHERE text LIKE '%November 21, 2025%' AND text LIKE '%Cornelia%'")
                 except Exception:
                     pass

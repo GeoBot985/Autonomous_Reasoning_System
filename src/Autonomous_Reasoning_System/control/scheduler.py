@@ -119,25 +119,19 @@ def start_heartbeat_with_plans(learner, confidence, plan_builder, interval_secon
                                     result_output = "No executor available"
 
                                     if plan_executor:
-                                         # Use PlanExecutor internal logic to route/execute step
-                                         # Note: We reuse _execute_step if public, or simulate it.
-                                         # Since _execute_step is protected, strictly we should use execute_plan(plan_id).
-                                         # But execute_plan runs loop.
-                                         # Assuming we want to run just ONE step in background per tick:
-                                         # We can invoke execute_plan, but it might run multiple steps if they are fast.
-                                         # Let's assume execute_plan handles resume correctly.
-                                         exec_res = plan_executor.execute_plan(plan.id)
+                                         # Use PlanExecutor's new execute_next_step method
+                                         exec_res = plan_executor.execute_next_step(plan.id)
 
-                                         if exec_res["status"] == "success" or exec_res["status"] == "active":
-                                              # We need to check if THIS step passed.
-                                              # PlanExecutor updates the plan object.
-                                              # We check plan status.
-                                              # But execute_plan runs ALL steps.
-                                              # If we want strictly one step, we need a different method or accept it runs all.
-                                              # "Autonomously executes the next pending step" implies singular.
-                                              # However, if PlanExecutor runs all, that's even better autonomy!
-                                              result_status = "complete" if plan.status == "complete" else "running"
-                                              result_output = str(exec_res)
+                                         status = exec_res.get("status")
+                                         if status == "complete":
+                                              result_status = "complete"
+                                              result_output = "Plan finished!"
+                                         elif status == "running":
+                                              result_status = "running"
+                                              result_output = f"Step completed: {exec_res.get('step_completed')}"
+                                         elif status == "suspended":
+                                              result_status = "suspended"
+                                              result_output = f"Suspended: {exec_res.get('errors')}"
                                          else:
                                               result_status = "failed"
                                               result_output = str(exec_res.get("errors"))
@@ -147,8 +141,6 @@ def start_heartbeat_with_plans(learner, confidence, plan_builder, interval_secon
                                          result_output = "PlanExecutor missing"
 
                                     # Plan updates are handled inside plan_executor usually.
-                                    # If we used execute_plan, we don't need manual update here.
-                                    # So we only log.
                                     print(f"[🤖 EXECUTOR] Result: {result_status}")
 
                         else:

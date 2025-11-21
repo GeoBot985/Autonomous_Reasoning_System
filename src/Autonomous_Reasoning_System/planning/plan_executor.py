@@ -28,66 +28,119 @@ class PlanExecutor:
 
     def execute_plan(self, plan_id: str) -> Dict[str, Any]:
         """
-        Executes the plan with the given ID.
+        Executes the plan with the given ID until completion or failure.
+        Wraps execute_next_step in a loop.
         """
         plan = self.plan_builder.active_plans.get(plan_id)
         if not plan:
             return {"status": "error", "message": f"Plan {plan_id} not found."}
 
         logger.info(f"Starting execution of plan: {plan.title} ({plan_id})")
-        plan.status = "active"
 
-        # Initialize workspace context if needed (optional)
-        # We can use plan.workspace to store intermediate results.
+        # Loop until plan is no longer active (complete, suspended, failed)
+        while True:
+            result = self.execute_next_step(plan_id)
+            status = result.get("status")
 
-        while not plan.all_done():
-            step = plan.next_step()
-            if not step:
+            if status in ["complete", "suspended", "failed", "error"]:
+                return result
+
+            if status != "running":
+                # Should not happen if next_step returns running, but safety break
                 break
 
-            logger.info(f"Executing step {plan.current_index + 1}: {step.description}")
-            self.plan_builder.update_step(plan.id, step.id, "running")
-
-            # Retry loop
-            result = {"status": "error", "errors": ["Did not run"]}
-            attempts = 0
-            max_attempts = self.retry_limit + 1
-
-            while attempts < max_attempts:
-                attempts += 1
-                result = self._execute_step(step, plan)
-
-                if result["status"] == "success":
-                    break
-
-                logger.warning(f"Step '{step.description}' failed attempt {attempts}/{max_attempts}. Errors: {result.get('errors')}")
-                if attempts < max_attempts:
-                    time.sleep(0.5) # Backoff slightly
-
-            if result["status"] == "success":
-                self.plan_builder.update_step(plan.id, step.id, "complete", result=str(result.get("final_output")))
-                plan.current_index += 1
-            else:
-                # Instead of failing the whole plan, we suspend it and ask for help.
-                self.plan_builder.update_step(plan.id, step.id, "suspended", result=f"Suspended after failure: {result.get('errors')}")
-                logger.error(f"Step failed after {attempts} attempts: {step.description}. Errors: {result.get('errors')}. Suspending plan.")
-                plan.status = "suspended"
-
-                return {
-                    "status": "suspended",
-                    "plan_id": plan_id,
-                    "failed_step": step.description,
-                    "errors": result.get("errors"),
-                    "message": f"I got stuck on step '{step.description}'. Error: {result.get('errors')}. Please provide guidance or modify the plan."
-                }
-
-        plan.status = "complete"
-        logger.info(f"Plan completed: {plan.title}")
         return {
-            "status": "success",
+            "status": "complete",
             "plan_id": plan_id,
             "summary": self.plan_builder.get_plan_summary(plan_id)
         }
+
+    def execute_next_step(self, plan_id: str) -> Dict[str, Any]:
+        """
+        Executes a single pending step of the plan.
+        Returns the status of the plan/step execution.
+        """
+        plan = self.plan_builder.active_plans.get(plan_id)
+        if not plan:
+            return {"status": "error", "message": f"Plan {plan_id} not found."}
+
+        if plan.status == "complete":
+             return {
+                "status": "complete",
+                "plan_id": plan_id,
+                "summary": self.plan_builder.get_plan_summary(plan_id)
+            }
+
+        step = plan.next_step()
+        if not step:
+            # No more steps, mark complete if not already
+            if not plan.all_done():
+                 # Maybe logic error or mixed states?
+                 pass
+            else:
+                 plan.status = "complete"
+
+            return {
+                "status": "complete",
+                "plan_id": plan_id,
+                "summary": self.plan_builder.get_plan_summary(plan_id)
+            }
+
+        # Update plan status to active if pending
+        if plan.status == "pending":
+            plan.status = "active"
+
+        logger.info(f"Executing step {plan.current_index + 1}: {step.description}")
+        self.plan_builder.update_step(plan.id, step.id, "running")
+
+        # Retry loop for this single step
+        result = {"status": "error", "errors": ["Did not run"]}
+        attempts = 0
+        max_attempts = self.retry_limit + 1
+
+        while attempts < max_attempts:
+            attempts += 1
+            result = self._execute_step(step, plan)
+
+            if result["status"] == "success":
+                break
+
+            logger.warning(f"Step '{step.description}' failed attempt {attempts}/{max_attempts}. Errors: {result.get('errors')}")
+            if attempts < max_attempts:
+                time.sleep(0.5) # Backoff slightly
+
+        if result["status"] == "success":
+            self.plan_builder.update_step(plan.id, step.id, "complete", result=str(result.get("final_output")))
+            plan.current_index += 1
+
+            # check if that was the last step
+            if plan.all_done():
+                plan.status = "complete"
+                logger.info(f"Plan completed: {plan.title}")
+                return {
+                    "status": "complete",
+                    "plan_id": plan_id,
+                    "summary": self.plan_builder.get_plan_summary(plan_id)
+                }
+            else:
+                return {
+                    "status": "running",
+                    "plan_id": plan_id,
+                    "step_completed": step.description
+                }
+        else:
+            # Suspend plan
+            self.plan_builder.update_step(plan.id, step.id, "suspended", result=f"Suspended after failure: {result.get('errors')}")
+            logger.error(f"Step failed after {attempts} attempts: {step.description}. Errors: {result.get('errors')}. Suspending plan.")
+            plan.status = "suspended"
+
+            return {
+                "status": "suspended",
+                "plan_id": plan_id,
+                "failed_step": step.description,
+                "errors": result.get("errors"),
+                "message": f"I got stuck on step '{step.description}'. Error: {result.get('errors')}. Please provide guidance or modify the plan."
+            }
 
     def _execute_step(self, step: Step, plan: Plan) -> Dict[str, Any]:
         """

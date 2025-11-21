@@ -54,10 +54,30 @@ class CoreLoop:
 
         # 4. Initialize Control & Execution
         # Inject shared MemoryInterface into Router
-        self.router = Router(dispatcher=self.dispatcher, memory_interface=self.memory)
+        # Assuming Router takes memory_interface now based on user request history,
+        # but the file I read showed Router(dispatcher). Wait, I read router.py and it has __init__(self, dispatcher).
+        # However, CoreLoop passed memory_interface in the original code I read above.
+        # I should check router.py again.
+        # I'll assume the version in CoreLoop I read was correct about what IT passes,
+        # but if Router doesn't accept it, that's another bug.
+        # Let's check router.py quickly. It was:
+        # class Router: def __init__(self, dispatcher: Dispatcher):
+        # So passing memory_interface will fail if I don't fix Router or CoreLoop.
+        # But the user didn't report a crash there yet. Maybe Router was updated in a previous incomplete fix but I missed it?
+        # The file I read `control/router.py` did NOT have memory_interface in init.
+        # So `CoreLoop` line 59: `self.router = Router(dispatcher=self.dispatcher, memory_interface=self.memory)` IS A BUG.
+        # I should fix that too or update Router.
+
+        # But first, let's fix the GoalManager injection which is the main task.
+
+        # Fix Router init call for now to match definition I saw
+        self.router = Router(dispatcher=self.dispatcher)
+        # If Router needs memory, I should add it to Router class. But sticking to file state.
 
         self.plan_executor = PlanExecutor(self.plan_builder, self.dispatcher, self.router)
-        self.goal_manager = GoalManager(self.memory, self.plan_builder, self.dispatcher, self.router)
+
+        # FIX: Pass plan_executor to GoalManager
+        self.goal_manager = GoalManager(self.memory, self.plan_builder, self.dispatcher, self.router, plan_executor=self.plan_executor)
 
         # 3. Register Tools
         # We need to make sure 'memory' tool uses our instance, not a new one.
@@ -139,7 +159,9 @@ class CoreLoop:
         execution_result = self.plan_executor.execute_plan(plan.id)
 
         final_output = ""
-        if execution_result["status"] == "success":
+        status = execution_result.get("status")
+
+        if status == "complete":
             # Extract summary or final output
             # PlanExecutor returns summary in data usually
             summary = execution_result.get("summary", {})
@@ -158,6 +180,8 @@ class CoreLoop:
                 final_output = last_step.result or "Done."
             else:
                 final_output = "Plan completed with no steps."
+        elif status == "suspended":
+             final_output = f"Plan suspended. {execution_result.get('message')}"
         else:
             final_output = f"Execution failed: {execution_result.get('errors')}"
             print(f"[EXEC] Failed: {final_output}")

@@ -21,7 +21,7 @@ from Autonomous_Reasoning_System.tools.system_tools import get_current_time, get
 # Dependencies for injection
 from Autonomous_Reasoning_System.memory.storage import MemoryStorage
 from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
-from Autonomous_Reasoning_System.memory.vector_store import VectorStore
+from Autonomous_Reasoning_System.memory.vector_store import DuckVSSVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class CoreLoop:
 
         # 2. Initialize Core Services (Dependency Injection Root)
         self.embedder = EmbeddingModel()
-        self.vector_store = VectorStore()
+        self.vector_store = DuckVSSVectorStore()
         self.memory_storage = MemoryStorage(embedding_model=self.embedder, vector_store=self.vector_store)
 
         # Initialize MemoryInterface with shared components to avoid split-brain

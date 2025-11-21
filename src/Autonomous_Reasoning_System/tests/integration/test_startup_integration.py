@@ -16,7 +16,7 @@ class TestStartupContext(unittest.TestCase):
         # Initialize CoreLoop (mocking dependencies to speed up)
         with patch('Autonomous_Reasoning_System.control.core_loop.Dispatcher'), \
              patch('Autonomous_Reasoning_System.control.core_loop.EmbeddingModel'), \
-             patch('Autonomous_Reasoning_System.control.core_loop.VectorStore'), \
+             patch('Autonomous_Reasoning_System.control.core_loop.DuckVSSVectorStore'), \
              patch('Autonomous_Reasoning_System.control.core_loop.MemoryStorage'), \
              patch('Autonomous_Reasoning_System.control.core_loop.MemoryInterface'), \
              patch('Autonomous_Reasoning_System.control.core_loop.PlanBuilder'), \

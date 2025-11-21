@@ -4,7 +4,7 @@ from Autonomous_Reasoning_System.memory.episodes import EpisodicMemory
 from Autonomous_Reasoning_System.memory.persistence import get_persistence_service
 from Autonomous_Reasoning_System.memory.storage import MemoryStorage
 from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
-from Autonomous_Reasoning_System.memory.vector_store import VectorStore
+from Autonomous_Reasoning_System.memory.vector_store import DuckVSSVectorStore
 from Autonomous_Reasoning_System.infrastructure.concurrency import memory_write_lock
 from Autonomous_Reasoning_System.infrastructure.observability import Metrics
 import numpy as np
@@ -18,7 +18,7 @@ class MemoryInterface:
     Handles persistence automatically via PersistenceService.
     """
 
-    def __init__(self, memory_storage: MemoryStorage = None, embedding_model: EmbeddingModel = None, vector_store: VectorStore = None):
+    def __init__(self, memory_storage: MemoryStorage = None, embedding_model: EmbeddingModel = None, vector_store=None):
         self.persistence = get_persistence_service()
 
         # Use injected dependencies or instantiate new ones (avoiding global state if possible)
@@ -39,11 +39,11 @@ class MemoryInterface:
         # It also said "Delete the logic that reads the parquet file into a dataframe".
         # So we likely don't need to load deterministic memory into DF here just to pass to storage.
 
-        # However, VectorStore still needs to be loaded/hydrated.
-        v_idx = self.persistence.load_vector_index()
-        v_meta = self.persistence.load_vector_metadata()
-
-        self.vector_store = vector_store or VectorStore(index=v_idx, metadata=v_meta)
+        # Initialize VSS-backed vector store (kept inside DuckDB)
+        self.vector_store = vector_store or DuckVSSVectorStore(
+            db_path=memory_storage.db_path if memory_storage else None,
+            dim=self.embedder.dim if hasattr(self.embedder, "dim") else 384
+        )
 
         # For Storage:
         # If injected, use it. If not, create it.
@@ -61,43 +61,11 @@ class MemoryInterface:
         self.episodes = EpisodicMemory(initial_df=ep_df)
 
 
-        # ------------------------------------------------------------------
-        # 6. Reconnect the Vector Index with Deterministic Memory
-        # Validate consistency: If memory count != vector count, rebuild index.
-        # ------------------------------------------------------------------
-        mem_count = len(self.storage.get_all_memories())
-        vec_count = len(self.vector_store.metadata)
-
-        if mem_count != vec_count:
-            print(f"⚠️ Mismatch detected: Memory={mem_count}, Vectors={vec_count}. Rebuilding index...")
-            self._rebuild_vector_index()
-        else:
-            print("✅ Memory and Vector Index are consistent.")
-
         print("✅ Memory Interface fully hydrated.")
 
     def _rebuild_vector_index(self):
-        """Rebuild FAISS index from current memory storage."""
-        print("🔁 Rebuilding FAISS index from stored memories...")
-        self.vector_store.reset()
-
-        df = self.storage.get_all_memories()
-        count = 0
-        for _, row in df.iterrows():
-            text = str(row.get("text", "")).strip()
-            if not text:
-                continue
-            vec = self.embedder.embed(text)
-            meta = {
-                "memory_type": row.get("memory_type", "unknown"),
-                "source": row.get("source", "unknown")
-            }
-            self.vector_store.add(row["id"], text, vec, meta)
-            count += 1
-
-        print(f"✅ Rebuilt FAISS index with {count} entries.")
-        # Save immediately to fix the disk state too
-        self.save()
+        """No-op: VSS lives inside DuckDB and stays consistent."""
+        print("[MemoryInterface] VSS index rebuild not required.")
 
     # ------------------------------------------------------------------
     def save(self):
@@ -122,8 +90,6 @@ class MemoryInterface:
             # self.persistence.save_goals(self.storage.get_all_goals())
 
             self.persistence.save_episodic_memory(self.episodes.get_all_episodes())
-            self.persistence.save_vector_index(self.vector_store.index)
-            self.persistence.save_vector_metadata(self.vector_store.metadata)
             print("✅ Memory saved.")
 
     # ------------------------------------------------------------------

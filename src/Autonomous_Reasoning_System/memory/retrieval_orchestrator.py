@@ -79,20 +79,16 @@ class RetrievalOrchestrator:
         try:
             q_vec = self.embedder.embed(query)
 
-            # Try retrieving from FAISS if available
-            if hasattr(self.memory.vector_store, "index") and self.memory.vector_store.index is not None:
-                print("🧠 Using FAISS index for semantic retrieval...")
-                D, I = self.memory.vector_store.index.search(np.array([q_vec]).astype("float32"), k)
-                results = []
-                for idx, score in zip(I[0], D[0]):
-                    if idx < len(self.memory.vector_store.metadata):
-                        meta = self.memory.vector_store.metadata[idx]
-                        results.append(meta["text"])
-                print(f"✅ Retrieved {len(results)} semantic results.")
-                return results
+            # Try retrieving from DuckDB VSS if available
+            if hasattr(self.memory, "vector_store"):
+                print("🧠 Using DuckDB VSS for semantic retrieval...")
+                results = self.memory.vector_store.search(np.array(q_vec), k)
+                texts = [r.get("text") for r in results if r.get("text")]
+                print(f"✅ Retrieved {len(texts)} semantic results.")
+                return texts
 
-            # --- fallback path if FAISS not available ---
-            print("⚠️ FAISS index missing, rebuilding temporary vector set...")
+            # --- fallback path if VSS not available ---
+            print("⚠️ VSS missing, rebuilding temporary vector set...")
             mems = self.memory.get_all_memories()
             texts = mems["text"].tolist()
             vecs = np.array([self.embedder.embed(t) for t in texts])

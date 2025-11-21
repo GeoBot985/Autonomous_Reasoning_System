@@ -1,97 +1,103 @@
 # Autonomous_Reasoning_System/memory/vector_store.py
-import faiss
+"""
+DuckDB VSS-backed vector store to keep embeddings and text in the same ACID-safe DB.
+"""
+
+import duckdb
 import numpy as np
-import os
-import pickle
+import json
+from typing import Optional, Dict, Any, List
+from Autonomous_Reasoning_System.infrastructure import config
 
-class VectorStore:
-    """
-    Manages FAISS index for semantic similarity search.
-    Stores metadata alongside the index for recall and persistence.
-    Persistence is handled by MemoryInterface via PersistenceService.
-    """
-    def __init__(self, dim=384, index=None, metadata=None):
+
+class DuckVSSVectorStore:
+    def __init__(self, db_path: Optional[str] = None, dim: int = 384):
+        self.db_path = db_path or config.MEMORY_DB_PATH
         self.dim = dim
-        self.index = index if index is not None else faiss.IndexFlatIP(dim)   # cosine similarity (after normalization)
-        self.metadata = metadata if metadata is not None else []
-        self.id_map = {} # Maps uid -> list of indices in metadata/faiss
-        self._rebuild_id_map()
+        self.con = duckdb.connect(self.db_path)
 
-    def _rebuild_id_map(self):
-        """Rebuilds the internal ID map from metadata."""
-        self.id_map = {}
-        for idx, item in enumerate(self.metadata):
-            if item.get("deleted"):
-                continue
-            uid = item.get("id")
-            if uid:
-                if uid not in self.id_map:
-                    self.id_map[uid] = []
-                self.id_map[uid].append(idx)
+        # Ensure VSS extension is available
+        self.con.execute("INSTALL vss;")
+        self.con.execute("LOAD vss;")
 
-    def add(self, uid: str, text: str, vector: np.ndarray, meta: dict = None):
+        # Create table + HNSW index
+        self.con.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS vectors (
+                id VARCHAR PRIMARY KEY,
+                embedding FLOAT[{self.dim}],
+                text VARCHAR,
+                meta JSON
+            )
+            """
+        )
+        self.con.execute(
+            """
+            CREATE INDEX IF NOT EXISTS vector_idx
+            ON vectors USING HNSW (embedding)
+            WITH (metric = 'cosine');
+            """
+        )
+
+    # ------------------------------------------------------------------
+    def add(self, uid: str, text: str, vector: np.ndarray, meta: Dict[str, Any] | None = None):
+        """Insert or update a vector entry."""
         if vector.ndim == 1:
             vector = np.expand_dims(vector, axis=0)
-        self.index.add(vector.astype(np.float32))
 
-        # The new item is at the end of the list
-        idx = len(self.metadata)
-
-        entry = {"id": uid, "text": text, **(meta or {})}
-        self.metadata.append(entry)
-
-        if uid:
-            if uid not in self.id_map:
-                self.id_map[uid] = []
-            self.id_map[uid].append(idx)
+        payload = (
+            uid,
+            vector[0].astype(np.float32).tolist(),
+            text,
+            json.dumps(meta or {}),
+        )
+        self.con.execute(
+            """
+            INSERT INTO vectors (id, embedding, text, meta)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE
+            SET embedding = excluded.embedding,
+                text = excluded.text,
+                meta = excluded.meta
+            """,
+            payload,
+        )
 
     def soft_delete(self, uid: str):
-        """
-        Marks all entries with the given UID as deleted.
-        They will be filtered out during search.
-        """
-        if uid in self.id_map:
-            for idx in self.id_map[uid]:
-                if 0 <= idx < len(self.metadata):
-                    self.metadata[idx]["deleted"] = True
-            # Remove from map so we don't track it anymore
-            del self.id_map[uid]
-            return True
-        return False
+        """Remove an entry by id."""
+        self.con.execute("DELETE FROM vectors WHERE id = ?", (uid,))
+        return True
 
-    def search(self, query_vec: np.ndarray, k=5):
-        if len(self.metadata) == 0:
-            return []
+    def search(self, query_vec: np.ndarray, k: int = 5) -> List[Dict[str, Any]]:
+        """Search by embedding vector."""
         if query_vec.ndim == 1:
             query_vec = np.expand_dims(query_vec, axis=0)
 
-        # We might need to search more than k if there are deleted items
-        # Heuristic: search k * 2 + deleted_count?
-        # Or just search larger k and filter.
-        # Since we don't know how many deleted items are in top-k, we'll fetch more.
-        search_k = min(len(self.metadata), k * 3)
+        q = query_vec[0].astype(np.float32).tolist()
+        rows = self.con.execute(
+            """
+            SELECT id, text, meta, embedding <=> ?::FLOAT[] AS distance
+            FROM vectors
+            ORDER BY distance
+            LIMIT ?
+            """,
+            (q, k),
+        ).fetchall()
 
-        scores, idxs = self.index.search(query_vec.astype(np.float32), search_k)
         results = []
-
-        for i, score in zip(idxs[0], scores[0]):
-            if 0 <= i < len(self.metadata):
-                item = self.metadata[i]
-                if item.get("deleted"):
-                    continue
-
-                # Create a copy to return
-                res_item = item.copy()
-                res_item["score"] = float(score)
-                results.append(res_item)
-
-                if len(results) >= k:
-                    break
-
+        for rid, text, meta, distance in rows:
+            # Convert distance to similarity score (cosine distance in [0,2])
+            score = 1 - float(distance)
+            try:
+                meta_obj = json.loads(meta) if meta else {}
+            except Exception:
+                meta_obj = {}
+            results.append({"id": rid, "text": text, "score": score, **meta_obj})
         return results
 
     def reset(self):
-        """Clear the index and metadata."""
-        self.index = faiss.IndexFlatIP(self.dim)
-        self.metadata = []
-        self.id_map = {}
+        """Clear all vectors."""
+        self.con.execute("DELETE FROM vectors;")
+
+    def close(self):
+        self.con.close()

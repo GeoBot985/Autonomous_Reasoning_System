@@ -1,9 +1,7 @@
-from Autonomous_Reasoning_System.memory.singletons import (
-    get_embedding_model,
-    get_memory_storage,
-)
+
 import re
 import numpy as np
+from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
 
 
 class RetrievalOrchestrator:
@@ -15,9 +13,9 @@ class RetrievalOrchestrator:
     - entity-aware → resolves named entities like "Cornelia" to the most relevant memory
     """
 
-    def __init__(self):
-        self.memory = get_memory_storage()
-        self.embedder = get_embedding_model()  # reuse the same embedding model
+    def __init__(self, memory_storage=None, embedding_model=None):
+        self.memory = memory_storage
+        self.embedder = embedding_model or EmbeddingModel()  # reuse the same embedding model
 
     # ---------------------------------------------------
     def detect_intent(self, query: str) -> str:
@@ -30,6 +28,9 @@ class RetrievalOrchestrator:
 
     # ---------------------------------------------------
     def retrieve(self, query: str):
+        if not self.memory:
+            return []
+
         mode = self.detect_intent(query)
         print(f"🧭 Retrieval mode → {mode}")
 
@@ -142,6 +143,8 @@ class RetrievalOrchestrator:
             score += min(0.3, overlap / 50.0)
             return score
 
+        # Use apply but check if 'score' column exists or copy slice to avoid warning
+        subset = subset.copy()
         subset["score"] = subset.apply(score_row, axis=1)
         best = subset.sort_values("score", ascending=False).iloc[0]
         print(f"[🧩 EntityResolution] '{name}' → best match score={best['score']:.3f}")

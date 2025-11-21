@@ -1,6 +1,5 @@
 import json
 import re
-from ..memory.singletons import get_memory_storage
 from ..memory.retrieval_orchestrator import RetrievalOrchestrator
 from .engine import call_llm
 
@@ -12,9 +11,15 @@ class ReflectionInterpreter:
     The model is instructed that retrieved memories override all other world knowledge.
     """
 
-    def __init__(self):
-        self.memory = get_memory_storage()
-        self.retriever = RetrievalOrchestrator()
+    def __init__(self, memory_storage=None):
+        self.memory = memory_storage
+        # Note: RetrievalOrchestrator might need memory injected too, or it pulls from singletons/Interface
+        # If RetrievalOrchestrator is not refactored yet, it will fail.
+        # We should instantiate it with memory if possible or assume it is refactored.
+        # The previous code imported get_memory_storage.
+        # We will try to pass memory if we can, but RetrievalOrchestrator init isn't visible yet.
+        # Assuming we fix RetrievalOrchestrator next.
+        self.retriever = RetrievalOrchestrator(memory_storage=memory_storage)
 
     # ----------------------------------------------------------------------
     def interpret(self, user_input: str, raw: bool = False) -> dict:
@@ -34,8 +39,9 @@ class ReflectionInterpreter:
 
         # === REFLECTIVE MODE ====================================================
         try:
-            df = self.memory.get_all_memories()
-            if df.empty:
+            df = self.memory.get_all_memories() if self.memory else None
+
+            if df is None or df.empty:
                 return {
                     "summary": "No reflections recorded yet.",
                     "insight": "Tyrone has not reflected before.",
@@ -43,7 +49,12 @@ class ReflectionInterpreter:
                 }
 
             # 🧠 Retrieve relevant factual memories using semantic recall
-            retrieved = self.retriever._semantic_retrieve(user_input, k=5)
+            # Access protected method if available, or public retrieve
+            if hasattr(self.retriever, "_semantic_retrieve"):
+                retrieved = self.retriever._semantic_retrieve(user_input, k=5)
+            else:
+                retrieved = self.retriever.retrieve(user_input) # Fallback
+
             memory_context = (
                 "\n".join([f"- {r}" for r in retrieved])
                 if retrieved
@@ -96,10 +107,11 @@ class ReflectionInterpreter:
             result.setdefault("confidence_change", "neutral")
 
             # 🧩 Log structured reflection
-            self.memory.add_memory(
-                f"Reflection → {result['summary']} | Insight: {result['insight']} | Confidence: {result['confidence_change']}",
-                memory_type="reflection",
-            )
+            if self.memory:
+                self.memory.add_memory(
+                    f"Reflection → {result['summary']} | Insight: {result['insight']} | Confidence: {result['confidence_change']}",
+                    memory_type="reflection",
+                )
 
             print(f"[🪞 REFLECTION] {result}")
             return result

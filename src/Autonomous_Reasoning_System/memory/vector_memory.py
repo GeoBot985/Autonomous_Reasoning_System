@@ -1,10 +1,7 @@
 # Autonomous_Reasoning_System/memory/vector_memory.py
-
-from Autonomous_Reasoning_System.memory.singletons import (
-    get_embedding_model,
-    get_memory_storage,
-    get_vector_store,
-)
+from Autonomous_Reasoning_System.memory.storage import MemoryStorage
+from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
+from Autonomous_Reasoning_System.memory.vector_store import VectorStore
 import numpy as np
 
 
@@ -13,11 +10,11 @@ class VectorMemory:
     Combines symbolic (DuckDB) memory with vector-based semantic recall.
     """
 
-    def __init__(self):
+    def __init__(self, memory_storage=None, embedding_model=None, vector_store=None):
         print("🧠 Vector Memory initialized.")
-        self.storage = get_memory_storage()
-        self.embedder = get_embedding_model()
-        self.vectors = get_vector_store()
+        self.storage = memory_storage or MemoryStorage()
+        self.embedder = embedding_model or EmbeddingModel()
+        self.vectors = vector_store or VectorStore()
 
     def add(self, text, memory_type="note", importance=0.5):
         """

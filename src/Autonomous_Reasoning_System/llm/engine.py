@@ -1,16 +1,17 @@
-import subprocess
+import requests
 import json
 from ..infrastructure import config
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 
-DEFAULT_MODEL = "deepseek-r1:14b"
+DEFAULT_MODEL = config.DEFAULT_MODEL or "gemma3:1b"
+BASE_URL = config.OLLAMA_BASE_URL or "http://localhost:11434"
 
 class LLMEngine:
     def __init__(self, provider: str = None, model: str = None):
         self.provider = provider or config.LLM_PROVIDER
-        self.model = model or config.DEFAULT_MODEL
+        self.model = model or DEFAULT_MODEL
 
     def generate_response(self, prompt: str) -> str:
         """
@@ -33,36 +34,32 @@ class LLMEngine:
 # ✅ MODULE-LEVEL function (not inside class!)
 def call_llm(system_prompt: str, user_prompt: str) -> str:
     """
-    Wraps the LLM call. Now injects today's date dynamically so
-    the model can calculate ages and interpret time properly.
+    Wraps the LLM call using HTTP requests to Ollama.
     """
-    # ✅ Get current date in local timezone
-        # Date injection removed — personal facts override everything
     merged_system = system_prompt
+    full_prompt = f"SYSTEM:\n{merged_system}\n\nUSER:\n{user_prompt}"
 
-    # ✅ Example call to local LLM via Ollama
-    full_input = f"SYSTEM:\n{merged_system}\n\nUSER:\n{user_prompt}"
+    url = f"{BASE_URL}/api/generate"
+    payload = {
+        "model": DEFAULT_MODEL,
+        "prompt": full_prompt,
+        "stream": False
+    }
 
     try:
-        result = subprocess.run(
-            ["ollama", "run", "gemma3:1b"],
-            input=full_input.encode("utf-8"),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=60
-        )
+        response = requests.post(url, json=payload, timeout=60)
+        response.raise_for_status()
 
-        raw_out = result.stdout.decode("utf-8", errors="replace").strip()
-        raw_err = result.stderr.decode("utf-8", errors="replace").strip()
-
-        print("───────── LLM DEBUG ─────────")
-        print("STDOUT:\n", raw_out[:500])
-        print("STDERR:\n", raw_err[:300])
-        print("──────────────────────────────")
+        data = response.json()
+        raw_out = data.get("response", "").strip()
 
         if not raw_out:
-            return f"(no stdout) stderr={raw_err}"
+            return f"(no response content)"
         return raw_out
 
+    except requests.exceptions.ConnectionError:
+        print(f"[LLM ERROR] Could not connect to Ollama at {url}. Is it running?")
+        return "Error: AI service unavailable."
     except Exception as e:
+        print(f"[LLM ERROR] {e}")
         return f"LLM call failed: {e}"

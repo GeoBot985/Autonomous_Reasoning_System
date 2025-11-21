@@ -6,7 +6,6 @@ Creates and manages goal–plan–step hierarchies for Tyrone.
 This module handles structure and progress tracking only,
 leaving execution control to the CoreLoop or Scheduler.
 """
-from Autonomous_Reasoning_System.memory.singletons import get_memory_storage
 from Autonomous_Reasoning_System.llm.reflection_interpreter import ReflectionInterpreter
 from Autonomous_Reasoning_System.llm.plan_reasoner import PlanReasoner
 
@@ -14,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import uuid4
 from typing import List, Optional, Dict, Any
+import json
 from .workspace import Workspace
 
 
@@ -29,6 +29,27 @@ class Step:
     result: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "description": self.description,
+            "status": self.status,
+            "result": self.result,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat()
+        }
+
+    @staticmethod
+    def from_dict(data):
+        return Step(
+            id=data["id"],
+            description=data["description"],
+            status=data["status"],
+            result=data.get("result"),
+            created_at=datetime.fromisoformat(data["created_at"]),
+            updated_at=datetime.fromisoformat(data["updated_at"])
+        )
 
 
 @dataclass
@@ -81,6 +102,30 @@ class Plan:
             "percent_complete": round(percent, 1)
         }
 
+    def to_dict(self):
+         return {
+             "id": self.id,
+             "goal_id": self.goal_id,
+             "title": self.title,
+             "steps": [s.to_dict() for s in self.steps],
+             "current_index": self.current_index,
+             "status": self.status,
+             "created_at": self.created_at.isoformat()
+             # workspace serialization skipped for DB storage or handled separately
+         }
+
+    @staticmethod
+    def from_dict(data):
+        plan = Plan(
+            id=data["id"],
+            goal_id=data["goal_id"],
+            title=data["title"],
+            steps=[Step.from_dict(s) for s in data["steps"]],
+            current_index=data.get("current_index", 0),
+            status=data["status"],
+            created_at=datetime.fromisoformat(data["created_at"])
+        )
+        return plan
 
 
 @dataclass
@@ -102,9 +147,84 @@ class PlanBuilder:
     def __init__(self, reflector: ReflectionInterpreter | None = None, memory_storage=None):
         self.active_goals: Dict[str, Goal] = {}
         self.active_plans: Dict[str, Plan] = {}
-        self.memory = memory_storage if memory_storage else get_memory_storage()
+        self.memory = memory_storage
+        if not self.memory:
+             print("[WARN] PlanBuilder initialized without memory_storage. Persistence disabled.")
+
         self.reflector = reflector or ReflectionInterpreter()
-        self.reasoner = PlanReasoner() 
+        self.reasoner = PlanReasoner()
+
+        # Ensure persistence table exists
+        if self.memory:
+            self._init_plans_table()
+
+    def _init_plans_table(self):
+        """Create plans table if it doesn't exist."""
+        try:
+            self.memory.con.execute("""
+                CREATE TABLE IF NOT EXISTS plans (
+                    id VARCHAR PRIMARY KEY,
+                    data JSON,
+                    status VARCHAR,
+                    updated_at TIMESTAMP
+                )
+            """)
+        except Exception as e:
+            print(f"[PlanBuilder] Error initializing plans table: {e}")
+
+    def load_active_plans(self):
+        """Hydrate active plans from DB on startup."""
+        if not self.memory:
+            return
+
+        try:
+            # Fetch plans that are not complete
+            res = self.memory.con.execute("SELECT data FROM plans WHERE status != 'complete'").fetchall()
+            count = 0
+            for row in res:
+                try:
+                    plan_data = json.loads(row[0])
+                    plan = Plan.from_dict(plan_data)
+
+                    # Mark as paused if it was active/running during crash
+                    # But for now we just load them.
+
+                    self.active_plans[plan.id] = plan
+
+                    # We might also need to restore the goal?
+                    # Goals are stored separately in 'goals' table, so GoalManager should handle that.
+                    # But for PlanBuilder internal consistency, we might need a placeholder goal.
+                    if plan.goal_id not in self.active_goals:
+                         # Creating a dummy goal or fetching it?
+                         # Ideally GoalManager handles goals.
+                         pass
+                    count += 1
+                except Exception as e:
+                    print(f"[PlanBuilder] Error hydrating plan: {e}")
+
+            print(f"[PlanBuilder] Hydrated {count} active plans.")
+        except Exception as e:
+            print(f"[PlanBuilder] Error loading plans: {e}")
+
+    def _persist_plan(self, plan: Plan):
+        """Save plan state to DB."""
+        if not self.memory:
+            return
+
+        try:
+            data_json = json.dumps(plan.to_dict())
+            now_str = datetime.utcnow().isoformat()
+
+            # Upsert
+            # DuckDB doesn't support ON CONFLICT DO UPDATE easily in all versions,
+            # so we do check-then-insert/update or DELETE-INSERT.
+            # DELETE-INSERT is safest for simple KV store behavior.
+
+            self.memory.con.execute("DELETE FROM plans WHERE id=?", (plan.id,))
+            self.memory.con.execute("INSERT INTO plans VALUES (?, ?, ?, ?)",
+                                    (plan.id, data_json, plan.status, now_str))
+        except Exception as e:
+            print(f"[PlanBuilder] Error persisting plan {plan.id}: {e}")
 
     # ------------------- Goal Management -------------------
     def new_goal(self, goal_text: str) -> Goal:
@@ -140,6 +260,10 @@ class PlanBuilder:
         plan = Plan(id=str(uuid4()), goal_id=goal.id, title=goal.text, steps=steps)
         goal.plan = plan
         self.active_plans[plan.id] = plan
+
+        # Persist initial state
+        self._persist_plan(plan)
+
         return plan
 
     # ------------------- Progress & Accessors -------------------
@@ -173,6 +297,9 @@ class PlanBuilder:
 
         plan.mark_step(step_id, status, result)
 
+        # --- Persist updated state ---
+        self._persist_plan(plan)
+
         # --- Build progress summary and store it ---
         summary = plan.progress_summary()
         note = (
@@ -181,28 +308,33 @@ class PlanBuilder:
             f"({summary['percent_complete']}%). Current step: {summary['current_step']}. "
             f"Last action result: {result or 'N/A'}."
         )
-        self.memory.add_memory(
-            text=note,
-            memory_type="plan_progress",
-            importance=0.4,
-            source="PlanBuilder"
-        )
+        if self.memory:
+            self.memory.add_memory(
+                text=note,
+                memory_type="plan_progress",
+                importance=0.4,
+                source="PlanBuilder"
+            )
 
         # --- Mark plan complete if all done ---
         if plan.all_done():
             plan.status = "complete"
+            self._persist_plan(plan) # Persist completion status
+
             done_note = f"✅ Plan '{plan.title}' completed successfully."
-            self.memory.add_memory(
-                text=done_note,
-                memory_type="plan_summary",
-                importance=0.7,
-                source="PlanBuilder"
-            )
+            if self.memory:
+                self.memory.add_memory(
+                    text=done_note,
+                    memory_type="plan_summary",
+                    importance=0.7,
+                    source="PlanBuilder"
+                )
 
 
     def archive_completed(self):
         """Remove completed plans from active registry."""
         self.active_plans = {k: v for k, v in self.active_plans.items() if v.status != "complete"}
+        # We don't delete from DB, just from memory cache. DB retains history.
 
         # ------------------- Goal Reasoning -------------------
 

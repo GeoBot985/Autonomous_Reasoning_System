@@ -15,8 +15,14 @@ class ContextBuilder:
     Generates a working-memory context for reasoning or planning.
     """
 
-    def __init__(self, top_k: int = 5):
-        self.mem = MemoryInterface()
+    def __init__(self, memory_interface: MemoryInterface = None, top_k: int = 5):
+        # Allow injection or use a new instance if needed, but ideally this should be injected
+        # To avoid double init, we accept memory_interface.
+        self.mem = memory_interface
+        # If not provided, we assume it's not available or we'd have to create one.
+        # Creating one here is risky if MemoryInterface isn't lightweight.
+        # But for backward compat, we can try.
+        # However, better to rely on what's passed.
         self.top_k = top_k
 
     # ------------------------------------------------------------------
@@ -27,45 +33,40 @@ class ContextBuilder:
         - most recent episodic summaries (past 24h)
         Deduplicates repeated lines and truncates long summaries.
         """
+        if not self.mem:
+             return "### Tyrone's Working Memory Context ###\n(Memory system unavailable)"
 
         lines = ["### Tyrone's Working Memory Context ###"]
 
         # --- 1️⃣ Semantic context ---
         if query:
-            recall_text = self.mem.recall(query, k=self.top_k)
-            if recall_text and "No relevant memories" not in recall_text:
-                # Split into individual lines and deduplicate
-                seen = set()
-                unique_recall = []
-                for line in recall_text.splitlines():
-                    normalized = line.strip()
-                    if normalized and normalized not in seen:
-                        seen.add(normalized)
-                        unique_recall.append(normalized)
-                if unique_recall:
-                    lines.append("\n[Recent related memories]")
-                    lines.extend(unique_recall)
+            # We use retrieve instead of recall (recall was legacy)
+            results = self.mem.retrieve(query, k=self.top_k)
+            if results:
+                lines.append("\n[Recent related memories]")
+                for r in results:
+                    lines.append(f"- {r['text']}")
 
         # --- 2️⃣ Episodic context ---
+        # Accessing episodes via memory interface, not direct parquet file!
         try:
-            df = duckdb.sql(f"""
-                SELECT summary, start_time
-                FROM read_parquet('data/episodes.parquet')
-                WHERE start_time > '{(datetime.utcnow() - timedelta(days=1)).isoformat()}'
-                ORDER BY start_time DESC
-                LIMIT 3;
-            """).df()
+            # If EpisodicMemory uses DuckDB now, we query it via self.mem.episodes
+            if hasattr(self.mem, "episodes") and self.mem.episodes:
+                df = self.mem.episodes.get_all_episodes()
+                cutoff = (datetime.utcnow() - timedelta(days=1)).isoformat()
+                # Filter in pandas since we have the DF
+                recent = df[df["start_time"] > cutoff].sort_values("start_time", ascending=False).head(3)
 
-            if not df.empty:
-                lines.append("\n[Recent episodes]")
-                for _, row in df.iterrows():
-                    summary = str(row["summary"]) if row["summary"] else "(no summary)"
-                    # Trim long summaries for prompt compactness
-                    if len(summary) > 250:
-                        summary = summary[:247] + "..."
-                    lines.append(f"- ({row['start_time']}) {summary}")
-        except Exception:
+                if not recent.empty:
+                    lines.append("\n[Recent episodes]")
+                    for _, row in recent.iterrows():
+                        summary = str(row["summary"]) if row["summary"] else "(no summary)"
+                        # Trim long summaries for prompt compactness
+                        if len(summary) > 250:
+                            summary = summary[:247] + "..."
+                        lines.append(f"- ({row['start_time']}) {summary}")
+        except Exception as e:
+            print(f"[ContextBuilder] Error fetching episodes: {e}")
             lines.append("\n(No episodic data available)")
 
         return "\n".join(lines)
-

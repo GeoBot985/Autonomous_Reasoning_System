@@ -6,7 +6,7 @@ from datetime import datetime
 from uuid import uuid4
 import threading
 
-from Autonomous_Reasoning_System.memory.singletons import get_embedding_model
+from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
 
 
 class EpisodicMemory:
@@ -16,8 +16,8 @@ class EpisodicMemory:
     Persistence is handled by MemoryInterface via PersistenceService.
     """
 
-    def __init__(self, initial_df: pd.DataFrame = None):
-        self.embedder = get_embedding_model()
+    def __init__(self, initial_df: pd.DataFrame = None, embedding_model: EmbeddingModel = None):
+        self.embedder = embedding_model or EmbeddingModel()
         self.active_episode_id = None
 
         # Initialize in-memory connection
@@ -43,10 +43,13 @@ class EpisodicMemory:
             # (Optional logic, depends if we want to resume sessions)
             # For now, we start fresh or let user resume manually,
             # but let's check if there's an open episode.
-            res = self.con.execute("SELECT episode_id FROM episodes WHERE end_time IS NULL ORDER BY start_time DESC LIMIT 1").fetchone()
-            if res:
-                self.active_episode_id = res[0]
-                print(f"[Episodic] Resuming active episode: {self.active_episode_id}")
+            try:
+                res = self.con.execute("SELECT episode_id FROM episodes WHERE end_time IS NULL ORDER BY start_time DESC LIMIT 1").fetchone()
+                if res:
+                    self.active_episode_id = res[0]
+                    print(f"[Episodic] Resuming active episode: {self.active_episode_id}")
+            except Exception as e:
+                print(f"[Episodic] Error restoring active episode: {e}")
 
     # ------------------------------------------------------------------
     def begin_episode(self):

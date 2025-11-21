@@ -95,6 +95,30 @@ class MemoryStorage:
                         updated_at TIMESTAMP
                     )
                 """)
+
+                # KG Tables
+                self.con.execute("""
+                    CREATE TABLE IF NOT EXISTS entities (
+                        entity_id VARCHAR PRIMARY KEY,
+                        type VARCHAR
+                    )
+                """)
+
+                self.con.execute("""
+                    CREATE TABLE IF NOT EXISTS relations (
+                        name VARCHAR PRIMARY KEY
+                    )
+                """)
+
+                self.con.execute("""
+                    CREATE TABLE IF NOT EXISTS triples (
+                        subject VARCHAR,
+                        relation VARCHAR,
+                        object VARCHAR,
+                        UNIQUE(subject, relation, object)
+                    )
+                """)
+
                 self.con.commit()
             except Exception as e:
                 self.con.rollback()

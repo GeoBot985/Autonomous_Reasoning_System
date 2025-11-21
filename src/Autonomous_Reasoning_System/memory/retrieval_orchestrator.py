@@ -55,6 +55,29 @@ class RetrievalOrchestrator:
 
         print("⚠️ No high-confidence deterministic match. Falling back to hybrid ranking.")
 
+        # KG Enhancement: Expand semantic hits
+        expanded_results = set()
+
+        # Collect potential entities from semantic hits to expand
+        potential_entities = set()
+        # Add query keywords too
+        potential_entities.update(keywords)
+
+        for text in sem_results:
+             expanded_results.add(text)
+             # Extract entities from the text using our extractor
+             # This fulfills "For each high-score hit, lookup its corresponding entity"
+             hit_keywords = self.entity_extractor.extract(text)
+             potential_entities.update(hit_keywords)
+
+        # Limit expansion to avoid blowing up context
+        # Take top 5 entities found
+        target_entities = list(potential_entities)[:5]
+
+        kg_context = self._search_kg(target_entities)
+        for triple in kg_context:
+             expanded_results.add(f"Fact: {triple}")
+
         # 4. Fallback: Combine and Rank
         # Flatten lists
         combined_texts = set()
@@ -72,8 +95,49 @@ class RetrievalOrchestrator:
                 combined_texts.add(text)
                 final_results.append(text)
 
+        # Add KG results
+        for text in kg_context:
+            # Format triple as text
+            formatted = f"Fact: {text[0]} {text[1]} {text[2]}"
+            if formatted not in combined_texts:
+                combined_texts.add(formatted)
+                final_results.append(formatted)
+
         # Return top 5 unique results
         return final_results[:5]
+
+    # ---------------------------------------------------
+    def _search_kg(self, keywords: list[str]):
+        """Look up KG neighbors for keywords."""
+        if not keywords:
+            return []
+        try:
+             results = []
+             # Determine if self.memory is MemoryStorage or MemoryInterface
+             # MemoryStorage has _lock, MemoryInterface has storage._lock
+             storage = self.memory
+             if hasattr(self.memory, "storage"):
+                 storage = self.memory.storage
+
+             if not hasattr(storage, "_lock"):
+                 print("[WARN] Storage object does not have expected lock structure.")
+                 return []
+
+             with storage._lock: # Use read lock
+                 for kw in keywords:
+                     # Find triples where keyword is subject or object
+                     # We use ILIKE for loose matching
+                     query = f"%{kw}%"
+                     rows = storage.con.execute("""
+                        SELECT subject, relation, object FROM triples
+                        WHERE subject ILIKE ? OR object ILIKE ?
+                        LIMIT 3
+                     """, (query, query)).fetchall()
+                     results.extend(rows)
+             return results
+        except Exception as e:
+            print(f"[ERROR] KG search failed: {e}")
+            return []
 
     # ---------------------------------------------------
     def _search_deterministic(self, keywords: list[str]):

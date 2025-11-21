@@ -40,23 +40,35 @@ class PlanExecutor:
 
         logger.info(f"Starting execution of plan: {plan.title} ({plan_id})")
 
+        last_result = {}
+
         # Loop until plan is no longer active (complete, suspended, failed)
         while True:
             result = self.execute_next_step(plan_id)
             status = result.get("status")
+            last_result = result
 
             if status in ["complete", "suspended", "failed", "error"]:
-                return result
+                break
 
             if status != "running":
                 # Should not happen if next_step returns running, but safety break
                 break
 
-        return {
-            "status": "complete",
+        # Return the final result along with summary
+        return_val = {
+            "status": last_result.get("status", "unknown"),
             "plan_id": plan_id,
-            "summary": self.plan_builder.get_plan_summary(plan_id)
+            "summary": self.plan_builder.get_plan_summary(plan_id),
+            "final_output": last_result.get("final_output") or last_result.get("message")
         }
+
+        # If completed successfully, try to get the result of the very last step from the plan object
+        if plan.status == "complete" and len(plan.steps) > 0:
+             last_step = plan.steps[-1]
+             return_val["final_output"] = last_step.result
+
+        return return_val
 
     def execute_next_step(self, plan_id: str) -> Dict[str, Any]:
         """
@@ -68,25 +80,37 @@ class PlanExecutor:
             return {"status": "error", "message": f"Plan {plan_id} not found."}
 
         if plan.status == "complete":
+             # Try to get last result
+             last_output = None
+             if len(plan.steps) > 0:
+                 last_output = plan.steps[-1].result
+
              return {
                 "status": "complete",
                 "plan_id": plan_id,
-                "summary": self.plan_builder.get_plan_summary(plan_id)
+                "summary": self.plan_builder.get_plan_summary(plan_id),
+                "final_output": last_output
             }
 
         step = plan.next_step()
         if not step:
             # No more steps, mark complete if not already
             if not plan.all_done():
-                 # Maybe logic error or mixed states?
                  pass
             else:
                  plan.status = "complete"
+                 self.plan_builder._persist_plan(plan) # Ensure status is saved
+
+            # Try to get last result
+            last_output = None
+            if len(plan.steps) > 0:
+                 last_output = plan.steps[-1].result
 
             return {
                 "status": "complete",
                 "plan_id": plan_id,
-                "summary": self.plan_builder.get_plan_summary(plan_id)
+                "summary": self.plan_builder.get_plan_summary(plan_id),
+                "final_output": last_output
             }
 
         # Update plan status to active if pending
@@ -113,32 +137,37 @@ class PlanExecutor:
                 time.sleep(0.5) # Backoff slightly
 
         if result["status"] == "success":
-            self.plan_builder.update_step(plan.id, step.id, "complete", result=str(result.get("final_output")))
+            output = str(result.get("final_output"))
+            self.plan_builder.update_step(plan.id, step.id, "complete", result=output)
             plan.current_index += 1
 
             # check if that was the last step
             if plan.all_done():
                 plan.status = "complete"
+                self.plan_builder._persist_plan(plan)
                 logger.info(f"Plan completed: {plan.title}")
                 return {
                     "status": "complete",
                     "plan_id": plan_id,
-                    "summary": self.plan_builder.get_plan_summary(plan_id)
+                    "summary": self.plan_builder.get_plan_summary(plan_id),
+                    "final_output": output
                 }
             else:
                 return {
                     "status": "running",
                     "plan_id": plan_id,
-                    "step_completed": step.description
+                    "step_completed": step.description,
+                    "final_output": output
                 }
         else:
             # Mark plan and goal as failed after exhausting retries
-            self.plan_builder.update_step(plan.id, step.id, "failed", result=f"Failed after retries: {result.get('errors')}")
+            error_msg = f"Failed after retries: {result.get('errors')}"
+            self.plan_builder.update_step(plan.id, step.id, "failed", result=error_msg)
             plan.status = "failed"
+            self.plan_builder._persist_plan(plan)
 
             if self.memory and plan.goal_id:
                 try:
-                    # Update goal status to avoid orphaned goals
                     self.memory.update_goal(plan.goal_id, {
                         "status": "failed",
                         "updated_at": datetime.utcnow().isoformat()
@@ -161,30 +190,13 @@ class PlanExecutor:
         Executes a single step.
         Attempts to use the Router to determine the best tool(s) for the step description.
         """
-        # Use the step description as the intent for the router
-        # We can also inject context from previous steps via plan.workspace
-
         # Construct context from workspace
         context = plan.workspace.snapshot()
 
-        # We might want to prepend context to the query or pass it separately
-        # For now, the Router.route accepts text.
-        # Ideally, we should pass context to the router/dispatcher.
-
-        # Let's see if we can hint the router with context.
-        # The router's route method doesn't explicitly take external context
-        # other than what it builds internally or what is passed to tools.
-        # But dispatcher tools take arguments.
-
-        # We rely on the Router to interpret the step description.
-        # If the step is "Load image", Router should map to OCR/Image tools.
-
         try:
+            # We rely on the Router to interpret the step description.
+            # The router resolves the intent of the step description.
             route_result = self.router.route(step.description)
-
-            # Check if the route result indicates success
-            # The router returns: { "intent": ..., "pipeline": ..., "results": ..., "final_output": ... }
-            # We check the results list.
 
             failed_results = [r for r in route_result.get("results", []) if r["status"] != "success"]
 
@@ -198,7 +210,6 @@ class PlanExecutor:
             # If success, store the output in workspace for future steps
             final_output = route_result.get("final_output")
             if final_output:
-                # Store with a key derived from step description or generic "last_output"
                 plan.workspace.set("last_output", final_output)
                 plan.workspace.set(f"step_{step.id}_output", final_output)
 

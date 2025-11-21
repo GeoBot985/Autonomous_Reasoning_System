@@ -2,7 +2,11 @@ from ..memory.context_builder import ContextBuilder
 from ..memory.retrieval_orchestrator import RetrievalOrchestrator
 from .engine import call_llm
 from .consolidator import ReasoningConsolidator
+from ..tools.system_tools import get_current_time, get_current_location
+import threading
+import logging
 
+logger = logging.getLogger(__name__)
 
 class ContextAdapter:
     """
@@ -18,13 +22,14 @@ class ContextAdapter:
         self.builder = ContextBuilder()
         self.memory = memory_storage
         if not self.memory:
-             print("[WARN] ContextAdapter initialized without memory_storage.")
+             logger.warning("[WARN] ContextAdapter initialized without memory_storage.")
 
         self.retriever = RetrievalOrchestrator()
         self.consolidator = ReasoningConsolidator()
         self.turn_counter = 0
         self.history = [] # Short-term conversation history
         self.startup_context = {}  # Stores startup info like time and location
+        self._context_lock = threading.Lock()
 
         # Load recent conversation history from persistence
         if self.memory:
@@ -56,17 +61,38 @@ class ContextAdapter:
                             # Keep only the most recent 20 lines to avoid token bloat on restart
                             self.history = self.history[-20:]
 
-                            print(f"[ContextAdapter] Restored {len(self.history)} lines of conversation history.")
+                            logger.info(f"[ContextAdapter] Restored {len(self.history)} lines of conversation history.")
             except Exception as e:
-                print(f"[ContextAdapter] Error loading history: {e}")
+                logger.error(f"[ContextAdapter] Error loading history: {e}")
 
     def set_startup_context(self, context: dict):
         """Sets the startup context (e.g. location, time)."""
-        self.startup_context = context
+        with self._context_lock:
+            self.startup_context = context
+
+    def _ensure_context(self):
+        """Ensures minimal context exists if startup_context is empty."""
+        # Double check locking pattern to avoid overhead if already set
+        if self.startup_context:
+            return
+
+        with self._context_lock:
+            if not self.startup_context:
+                try:
+                    # Fallback if not initialized externally
+                    self.startup_context = {
+                        "Current Time": get_current_time(),
+                        # Skipping location to avoid API latency if not strictly needed, or we can call it.
+                        # "Current Location": get_current_location()
+                    }
+                except Exception as e:
+                    logger.warning(f"Failed to lazy-load context: {e}")
 
     # ------------------------------------------------------------------
     def run(self, user_input: str, system_prompt: str = None) -> str:
         self.turn_counter += 1
+
+        self._ensure_context()
 
         memories = self.retriever.retrieve(user_input)
 
@@ -83,10 +109,11 @@ class ContextAdapter:
 
         # Build startup context string
         startup_info = ""
-        if self.startup_context:
-            startup_info = "\nCURRENT CONTEXT:\n"
-            for key, value in self.startup_context.items():
-                startup_info += f"- {key}: {value}\n"
+        with self._context_lock:
+            if self.startup_context:
+                startup_info = "\nCURRENT CONTEXT:\n"
+                for key, value in self.startup_context.items():
+                    startup_info += f"- {key}: {value}\n"
 
         if memory_text or history_text or startup_info:
             system_prompt = f"""

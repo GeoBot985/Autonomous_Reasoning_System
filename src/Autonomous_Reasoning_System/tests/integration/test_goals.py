@@ -98,11 +98,11 @@ def test_goals_lifecycle(temp_persistence):
 
     assert "Planned 2 steps" in summary
 
-    # Verify goal updated in memory
+    # Verify goal updated in memory with PLAN ID, not necessarily steps JSON
     goal_record = memory.get_goal(goal_id)
     assert goal_record['status'] == "active"
     assert goal_record['plan_id'] == "plan_123"
-    assert "Step 1" in goal_record['steps']
+    # assert "Step 1" in goal_record['steps'] # REMOVED: We no longer sync steps to legacy JSON.
 
     # --- Test Execution Step 1 (Check 2) ---
     # Setup mock executor to execute step 1 successfully
@@ -117,7 +117,7 @@ def test_goals_lifecycle(temp_persistence):
 
     summary = goal_manager.check_goals()
 
-    assert "Executed step for goal 'Build a spaceship': running" in summary
+    assert "Executed step for goal 'Build a spaceship': Step 1" in summary
     mock_plan_executor.execute_next_step.assert_called_with("plan_123")
 
     # --- Test Execution Step 2 / Completion (Check 3) ---
@@ -130,7 +130,9 @@ def test_goals_lifecycle(temp_persistence):
 
     summary = goal_manager.check_goals()
 
-    assert "Executed step for goal 'Build a spaceship': complete" in summary
+    # Note: GoalManager now says "Goal ... completed." or "Executed step..." depending on return.
+    # If execute_next_step returns "complete", GoalManager appends "Goal ... completed."
+    assert "Goal 'Build a spaceship' completed." in summary
 
     # GoalManager should verify completion.
     goal_record = memory.get_goal(goal_id)
@@ -141,7 +143,11 @@ def test_goals_lifecycle(temp_persistence):
     real_plan.status = "complete"
 
     summary = goal_manager.check_goals()
-    # Should not find any active goals
+    # Should match behavior for completed plan found in check loop
+    # Since check_goals iterates active_goals (pending/active), if we marked it completed in DB above, it shouldn't appear in loop!
+    # Wait, get_active_goals returns status IN ('pending', 'active').
+    # We updated it to 'completed' in the previous step.
+    # So check_goals should find NOTHING.
     assert "No active goals" in summary
 
 if __name__ == "__main__":

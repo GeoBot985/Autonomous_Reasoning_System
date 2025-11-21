@@ -27,10 +27,12 @@ class LearningManager:
         """
         if not validation_result or not isinstance(validation_result, dict):
             return False
-        validation_result["timestamp"] = validation_result.get("timestamp") or datetime.utcnow().isoformat()
-        self.experience_buffer.append(validation_result)
-        # Keep recent 200 experiences only
-        self.experience_buffer = self.experience_buffer[-200:]
+
+        with self.lock:
+            validation_result["timestamp"] = validation_result.get("timestamp") or datetime.utcnow().isoformat()
+            self.experience_buffer.append(validation_result)
+            # Keep recent 200 experiences only
+            self.experience_buffer = self.experience_buffer[-200:]
         return True
 
     # ---------------------------------------------------------------
@@ -42,11 +44,7 @@ class LearningManager:
         Returns a dict with trend summary and inserts a short "lesson" memory.
         Thread-safe to prevent DuckDB write conflicts when called by multiple threads.
         """
-        from threading import Lock
-        if not hasattr(self, "_lock"):
-            self._lock = Lock()  # Create once per instance
-
-        with self._lock:  # 🔒 Prevent concurrent writes
+        with self.lock:  # 🔒 Prevent concurrent writes and reads of buffer
             now = datetime.utcnow()
             cutoff = now - timedelta(minutes=window_minutes)
             recent = [x for x in self.experience_buffer if self._ts(x["timestamp"]) >= cutoff]
@@ -73,7 +71,7 @@ class LearningManager:
                 f"Summary: {pos} positive, {neu} neutral, {neg} negative results overall."
             )
 
-            # ✅ Thread-safe write to DuckDB-backed memory
+            # ✅ Thread-safe write to DuckDB-backed memory (MemoryStorage handles its own locking)
             if self.memory:
                 self.memory.add_memory(
                     text=lesson_text,
@@ -102,6 +100,7 @@ class LearningManager:
             return "Memory storage not available."
 
         # ✅ Compatible call for any MemoryStorage version
+        # MemoryStorage is thread-safe for reads
         if hasattr(self.memory, "get_all"):
             df = self.memory.get_all()
         elif hasattr(self.memory, "get_all_memories"):
@@ -115,10 +114,14 @@ class LearningManager:
         # Simple heuristic: reduce importance of very old or negative lessons
         now = datetime.utcnow()
         updates = 0
+
+        # Note: We are iterating over a copy of data (DataFrame), so no lock needed here.
+        # Updates should use memory interface which is locked.
+
         for _, row in df.iterrows():
             age_days = (now - row["created_at"]).days if row["created_at"] else 0
             if "negative" in row["text"].lower() or age_days > 30:
-                new_importance = max(0.1, row["importance"] * 0.8)
+                # new_importance = max(0.1, row["importance"] * 0.8)
                 # You could later persist these via UPDATEs if required
                 updates += 1
         return f"Drift correction simulated for {updates} records."

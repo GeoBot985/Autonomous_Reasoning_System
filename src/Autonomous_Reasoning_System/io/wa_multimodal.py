@@ -1,8 +1,11 @@
 import os
 import time
 import base64
+import logging
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+
+logger = logging.getLogger(__name__)
 
 # ✅ Config
 USER_DATA_DIR = r"C:\Users\GeorgeC\AppData\Local\Google\Chrome\User Data\Profile 2"
@@ -30,7 +33,7 @@ def capture_full_image(page, filename):
         """
         thumb = page.evaluate_handle(js_thumb)
         if not thumb:
-            print("[DEBUG] No thumbnail found.")
+            logger.debug("No thumbnail found.")
             return None
 
         # 2️⃣ Click to open WhatsApp’s full-image viewer
@@ -42,10 +45,10 @@ def capture_full_image(page, filename):
         path = SAVE_DIR / filename
         if large_img:
             large_img.screenshot(path=str(path))
-            print(f"[DEBUG] Captured full image → {path}")
+            logger.debug(f"Captured full image → {path}")
         else:
             thumb.screenshot(path=str(path))
-            print(f"[DEBUG] Fallback: thumbnail screenshot → {path}")
+            logger.debug(f"Fallback: thumbnail screenshot → {path}")
 
         # 4️⃣ Close the viewer
         page.keyboard.press("Escape")
@@ -53,7 +56,7 @@ def capture_full_image(page, filename):
         return str(path)
 
     except Exception as e:
-        print(f"[DEBUG] capture_full_image error: {e}")
+        logger.error(f"capture_full_image error: {e}")
         return None
 
 # --------------------------------------------------------------------------
@@ -82,7 +85,7 @@ def save_voice_note(page, blob_url):
         """
         b64 = page.evaluate(js)
         if not b64:
-            print("[DEBUG] No base64 returned for voice note (fetch failed).")
+            logger.debug("No base64 returned for voice note (fetch failed).")
             return None
 
         filename = f"wa_{int(time.time())}.ogg"
@@ -92,7 +95,7 @@ def save_voice_note(page, blob_url):
         return str(path)
 
     except Exception as e:
-        print(f"[DEBUG] save_voice_note error: {e}")
+        logger.error(f"save_voice_note error: {e}")
         return None
 
 
@@ -134,7 +137,7 @@ def read_last_message(page):
     try:
         return page.evaluate(js)
     except Exception as e:
-        print(f"[DEBUG] JS error: {e}")
+        logger.error(f"JS error: {e}")
         return None
 
 # --------------------------------------------------------------------------
@@ -161,9 +164,9 @@ def capture_voice_note(page, context):
                     with open(path, "wb") as f:
                         f.write(data)
                     saved_file = str(path)
-                    print(f"[DEBUG] Intercepted and saved audio → {path}")
+                    logger.debug(f"Intercepted and saved audio → {path}")
         except Exception as e:
-            print(f"[DEBUG] handle_response error: {e}")
+            logger.error(f"handle_response error: {e}")
 
     # Listen for network responses temporarily
     context.on("response", handle_response)
@@ -183,14 +186,14 @@ def capture_voice_note(page, context):
         """
         played = page.evaluate(js_play)
         if not played:
-            print("[DEBUG] No Play button found.")
+            logger.debug("No Play button found.")
             return None
 
         # Wait briefly to allow network to load audio
         page.wait_for_timeout(4000)
 
     except Exception as e:
-        print(f"[DEBUG] capture_voice_note error: {e}")
+        logger.error(f"capture_voice_note error: {e}")
 
     finally:
         # Stop listening
@@ -203,16 +206,19 @@ def capture_voice_note(page, context):
 # MAIN LOOP
 # --------------------------------------------------------------------------
 def main():
+    from Autonomous_Reasoning_System.infrastructure.logging_utils import setup_logging
+    setup_logging()
+
     with sync_playwright() as p:
         browser = p.chromium.launch_persistent_context(
             user_data_dir=USER_DATA_DIR, headless=False
         )
         page = browser.new_page()
         page.goto(SELF_CHAT_URL)
-        print("⏳ Loading WhatsApp...")
+        logger.info("⏳ Loading WhatsApp...")
 
         time.sleep(10)
-        print("✅ Ready — watching for text, image, and voice messages.")
+        logger.info("✅ Ready — watching for text, image, and voice messages.")
 
         last_seen = None
         while True:
@@ -226,27 +232,27 @@ def main():
 
                 # 📝 TEXT
                 if msg["type"] == "text":
-                    print(f"\n📩 TEXT: {msg['text']}")
+                    logger.info(f"📩 TEXT: {msg['text']}")
 
                 # 🖼️ IMAGE
                 elif msg["type"] == "image":
-                    print("\n📩 IMAGE RECEIVED")
+                    logger.info("📩 IMAGE RECEIVED")
                     filename = f"wa_{int(time.time())}.jpg"
                     file_path = capture_full_image(page, filename)
-                    print(f"📎 Saved: {file_path}")
+                    logger.info(f"📎 Saved: {file_path}")
                     if msg.get("caption"):
-                        print(f"💬 Caption: {msg['caption']}")
+                        logger.info(f"💬 Caption: {msg['caption']}")
 
                 # 🎙️ VOICE
                 elif msg["type"] == "voice":
-                    print("\n🎙️ VOICE NOTE DETECTED")
-                    print(f"🔗 Blob: {msg['src']}")
+                    logger.info("🎙️ VOICE NOTE DETECTED")
+                    logger.info(f"🔗 Blob: {msg['src']}")
                     file_path = capture_voice_note(page, browser)
-                    print(f"🎧 Saved: {file_path}")
+                    logger.info(f"🎧 Saved: {file_path}")
                     if msg.get("duration"):
-                        print(f"⏱ Duration: {msg['duration']}")
+                        logger.info(f"⏱ Duration: {msg['duration']}")
                     if msg.get("text"):
-                        print(f"💬 Caption: {msg['text']}")
+                        logger.info(f"💬 Caption: {msg['text']}")
 
 
             time.sleep(POLL_INTERVAL)

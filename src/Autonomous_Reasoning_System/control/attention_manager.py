@@ -1,6 +1,9 @@
 import threading
 import time
 import sys
+import logging
+
+logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 _last_user_activity = 0
@@ -20,7 +23,7 @@ def acquire():
     _last_user_activity = time.time()
     _lock.acquire()
     if not _silent:
-        print("[🧭 ATTENTION] User input detected — pausing autonomous tasks.", flush=True)
+        logger.info("[🧭 ATTENTION] User input detected — pausing autonomous tasks.")
 
 
 def release():
@@ -28,7 +31,7 @@ def release():
     if _lock.locked():
         _lock.release()
         if not _silent:
-            print("[🧭 ATTENTION] User input handled — resuming autonomous tasks.", flush=True)
+            logger.info("[🧭 ATTENTION] User input handled — resuming autonomous tasks.")
 
 
 def user_activity_detected():
@@ -36,7 +39,7 @@ def user_activity_detected():
     global _last_user_activity
     _last_user_activity = time.time()
     if not _silent:
-        print("[🧭 ATTENTION] User or recent activity detected — pausing background tasks for 90 s.", flush=True)
+        logger.info("[🧭 ATTENTION] User or recent activity detected — pausing background tasks for 90 s.")
 
 
 def should_pause_autonomous() -> bool:

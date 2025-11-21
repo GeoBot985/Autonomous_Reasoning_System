@@ -1,5 +1,8 @@
 import os
 import io
+import logging
+
+logger = logging.getLogger(__name__)
 
 def consolidate_python_files(output_filename='consolidated_app.py', start_path='.'):
     """
@@ -14,8 +17,8 @@ def consolidate_python_files(output_filename='consolidated_app.py', start_path='
         start_path (str): The directory to begin the traversal from.
     """
     script_name = os.path.basename(__file__)
-    print(f"Starting consolidation from: {os.path.abspath(start_path)}")
-    print(f"Writing output to: {output_filename}\n")
+    logger.info(f"Starting consolidation from: {os.path.abspath(start_path)}")
+    logger.info(f"Writing output to: {output_filename}\n")
 
     files_collected_count = 0
 
@@ -39,7 +42,7 @@ def consolidate_python_files(output_filename='consolidated_app.py', start_path='
 
                     # Exclude the collector script itself and the output file
                     if filename == script_name or filename == output_filename:
-                        print(f"Skipping collector/output file: {relative_path}")
+                        logger.info(f"Skipping collector/output file: {relative_path}")
                         continue
 
                     try:
@@ -58,20 +61,22 @@ def consolidate_python_files(output_filename='consolidated_app.py', start_path='
                         outfile.write('\n\n') # Add extra separation between files
 
                         files_collected_count += 1
-                        print(f"  -> Added: {relative_path}")
+                        logger.info(f"  -> Added: {relative_path}")
 
                     except IOError as e:
-                        print(f"Error reading file {relative_path}: {e}")
+                        logger.error(f"Error reading file {relative_path}: {e}")
                     except UnicodeDecodeError as e:
-                        print(f"Encoding error in file {relative_path}: {e}")
+                        logger.error(f"Encoding error in file {relative_path}: {e}")
 
 
-        print(f"\nConsolidation complete! {files_collected_count} files successfully combined.")
+        logger.info(f"\nConsolidation complete! {files_collected_count} files successfully combined.")
 
     except IOError as e:
-        print(f"\nFATAL ERROR: Could not write to output file {output_filename}. {e}")
+        logger.critical(f"\nFATAL ERROR: Could not write to output file {output_filename}. {e}")
 
 
 if __name__ == '__main__':
+    from Autonomous_Reasoning_System.infrastructure.logging_utils import setup_logging
+    setup_logging()
     # Run from the current directory ('.') and output to 'consolidated_app.py'
     consolidate_python_files()

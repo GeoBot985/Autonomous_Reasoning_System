@@ -1,9 +1,11 @@
+import logging
 from pathlib import Path
 from pypdf import PdfReader
 from Autonomous_Reasoning_System.memory.storage import MemoryStorage
 from Autonomous_Reasoning_System.memory.llm_summarizer import summarize_with_local_llm
 import textwrap
 
+logger = logging.getLogger(__name__)
 
 class PDFIngestor:
     """
@@ -19,16 +21,16 @@ class PDFIngestor:
         if not path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        print(f"📄 Reading PDF: {path.name}")
+        logger.info(f"📄 Reading PDF: {path.name}")
         reader = PdfReader(path)
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
         if not text.strip():
-            print("⚠️ No text extracted.")
+            logger.warning("⚠️ No text extracted.")
             return
 
         # Split into chunks
         chunks = textwrap.wrap(text, chunk_size)
-        print(f"🧩 Splitting into {len(chunks)} chunks...")
+        logger.info(f"🧩 Splitting into {len(chunks)} chunks...")
 
         for i, chunk in enumerate(chunks, 1):
             title = f"{path.stem} (Part {i}/{len(chunks)})"
@@ -40,7 +42,7 @@ class PDFIngestor:
             )
 
         if summarize:
-            print("🧠 Summarizing content...")
+            logger.info("🧠 Summarizing content...")
             summary = summarize_with_local_llm(text[:6000])  # limit for speed
             self.memory.add_memory(
                 text=f"Summary of {path.name}:\n{summary}",
@@ -48,9 +50,9 @@ class PDFIngestor:
                 importance=0.9,
                 source="PDFIngestor"
             )
-            print("🧾 Summary added to memory.")
+            logger.info("🧾 Summary added to memory.")
 
-        print(f"✅ Ingestion complete: {len(chunks)} chunks + summary stored.")
+        logger.info(f"✅ Ingestion complete: {len(chunks)} chunks + summary stored.")
 
 
 # ==========================================================
@@ -59,18 +61,21 @@ class PDFIngestor:
 if __name__ == "__main__":
     import sys
     import traceback
+    from Autonomous_Reasoning_System.infrastructure.logging_utils import setup_logging
+
+    setup_logging()
 
     if len(sys.argv) < 2:
-        print("Usage: python -m Autonomous_Reasoning_System.io.pdf_ingestor <pdf_path>")
+        logger.error("Usage: python -m Autonomous_Reasoning_System.io.pdf_ingestor <pdf_path>")
         sys.exit(1)
 
     pdf_path = sys.argv[1]
-    print(f"⚙️ Starting ingestion for: {pdf_path}")
+    logger.info(f"⚙️ Starting ingestion for: {pdf_path}")
 
     try:
         ingestor = PDFIngestor()
         ingestor.ingest(pdf_path)
-        print("✅ Done.")
+        logger.info("✅ Done.")
     except Exception as e:
-        print("❌ Error during ingestion:")
-        traceback.print_exc()
+        logger.error("❌ Error during ingestion:")
+        logger.error(traceback.format_exc())

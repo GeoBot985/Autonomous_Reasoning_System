@@ -80,7 +80,7 @@ class CoreLoop:
         # But first, let's fix the GoalManager injection which is the main task.
 
         # Fix Router init call for now to match definition I saw
-        self.router = Router(dispatcher=self.dispatcher)
+        self.router = Router(dispatcher=self.dispatcher, memory_interface=self.memory)
         # If Router needs memory, I should add it to Router class. But sticking to file state.
 
         self.plan_executor = PlanExecutor(self.plan_builder, self.dispatcher, self.router)

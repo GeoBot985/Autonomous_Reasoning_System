@@ -13,8 +13,10 @@ class PDFIngestor:
     Optionally creates an overall summary.
     """
     def __init__(self):
-        # In standalone script usage, we might need to instantiate new Storage
-        self.memory = MemoryStorage()
+        # Shared embedder for consistent vectorization
+        from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
+        self.embedder = EmbeddingModel()
+        self.memory = MemoryStorage(embedding_model=self.embedder)
 
     def ingest(self, file_path: str, chunk_size: int = 1000, summarize: bool = True):
         path = Path(file_path)

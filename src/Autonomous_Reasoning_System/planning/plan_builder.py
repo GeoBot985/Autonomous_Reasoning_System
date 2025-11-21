@@ -149,15 +149,21 @@ class Goal:
 # ---------------------------------------------------------------------
 
 class PlanBuilder:
-    def __init__(self, reflector: ReflectionInterpreter | None = None, memory_storage=None):
+    def __init__(self, reflector: ReflectionInterpreter | None = None, memory_storage=None, embedding_model=None):
         self.active_goals: Dict[str, Goal] = {}
         self.active_plans: Dict[str, Plan] = {}
         self.memory = memory_storage
         if not self.memory:
              logger.warning("[WARN] PlanBuilder initialized without memory_storage. Persistence disabled.")
 
-        self.reflector = reflector or ReflectionInterpreter()
-        self.reasoner = PlanReasoner()
+        self.reflector = reflector or ReflectionInterpreter(
+            memory_storage=memory_storage,
+            embedding_model=embedding_model
+        )
+        self.reasoner = PlanReasoner(
+            memory_storage=memory_storage,
+            embedding_model=embedding_model
+        )
 
         # Ensure persistence table exists
         if self.memory:

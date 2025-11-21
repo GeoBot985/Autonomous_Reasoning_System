@@ -5,7 +5,10 @@ from datetime import datetime
 from uuid import uuid4
 import os
 import threading
+import logging
 from Autonomous_Reasoning_System.infrastructure import config
+
+logger = logging.getLogger(__name__)
 
 class MemoryStorage:
     """
@@ -25,7 +28,9 @@ class MemoryStorage:
 
         # Initialize persistent connection
         self.con = duckdb.connect(self.db_path)
-        self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
+        # Backwards compatibility for existing lock usage
+        self._lock = self._write_lock
 
         # Initialize Schema
         self.init_db()
@@ -45,34 +50,41 @@ class MemoryStorage:
 
     def init_db(self):
         """Create tables if they don't exist."""
-        with self._lock:
-            self.con.execute("""
-                CREATE TABLE IF NOT EXISTS memory (
-                    id VARCHAR PRIMARY KEY,
-                    text VARCHAR,
-                    memory_type VARCHAR,
-                    created_at TIMESTAMP,
-                    last_accessed TIMESTAMP,
-                    importance DOUBLE,
-                    scheduled_for TIMESTAMP,
-                    status VARCHAR,
-                    source VARCHAR
-                )
-            """)
+        with self._write_lock:
+            try:
+                self.con.begin()
+                self.con.execute("""
+                    CREATE TABLE IF NOT EXISTS memory (
+                        id VARCHAR PRIMARY KEY,
+                        text VARCHAR,
+                        memory_type VARCHAR,
+                        created_at TIMESTAMP,
+                        last_accessed TIMESTAMP,
+                        importance DOUBLE,
+                        scheduled_for TIMESTAMP,
+                        status VARCHAR,
+                        source VARCHAR
+                    )
+                """)
 
-            self.con.execute("""
-                CREATE TABLE IF NOT EXISTS goals (
-                    id VARCHAR PRIMARY KEY,
-                    text VARCHAR,
-                    priority INTEGER,
-                    status VARCHAR,
-                    steps VARCHAR,
-                    metadata VARCHAR,
-                    plan_id VARCHAR,
-                    created_at TIMESTAMP,
-                    updated_at TIMESTAMP
-                )
-            """)
+                self.con.execute("""
+                    CREATE TABLE IF NOT EXISTS goals (
+                        id VARCHAR PRIMARY KEY,
+                        text VARCHAR,
+                        priority INTEGER,
+                        status VARCHAR,
+                        steps VARCHAR,
+                        metadata VARCHAR,
+                        plan_id VARCHAR,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                """)
+                self.con.commit()
+            except Exception as e:
+                self.con.rollback()
+                logger.error(f"[MemoryStorage] init_db failed: {e}")
+                raise
 
     # ------------------------------------------------------------------
     def _escape(self, text: str) -> str:
@@ -92,17 +104,24 @@ class MemoryStorage:
         now_str = datetime.utcnow().isoformat()
         # sched_str handled via param query or manual string if using execute params
 
-        with self._lock:
-            self.con.execute("""
-                INSERT INTO memory (
-                    id, text, memory_type, created_at, last_accessed,
-                    importance, scheduled_for, status, source
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                new_id, text, memory_type, now_str, now_str,
-                importance, scheduled_for, None, source
-            ))
+        with self._write_lock:
+            try:
+                self.con.begin()
+                self.con.execute("""
+                    INSERT INTO memory (
+                        id, text, memory_type, created_at, last_accessed,
+                        importance, scheduled_for, status, source
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    new_id, text, memory_type, now_str, now_str,
+                    importance, scheduled_for, None, source
+                ))
+                self.con.commit()
+            except Exception as e:
+                self.con.rollback()
+                logger.error(f"[MemoryStorage] add_memory failed: {e}")
+                raise
 
         # 2️⃣ Generate embedding + update vector store
         if self.embedder and self.vector_store:
@@ -157,8 +176,15 @@ class MemoryStorage:
     # ------------------------------------------------------------------
     def delete_memory(self, phrase: str):
         escaped = f"%{phrase}%"
-        with self._lock:
-            self.con.execute("DELETE FROM memory WHERE text ILIKE ?", (escaped,))
+        with self._write_lock:
+            try:
+                self.con.begin()
+                self.con.execute("DELETE FROM memory WHERE text ILIKE ?", (escaped,))
+                self.con.commit()
+            except Exception as e:
+                self.con.rollback()
+                logger.error(f"[MemoryStorage] delete_memory failed: {e}")
+                raise
         return True
 
     # ------------------------------------------------------------------
@@ -205,7 +231,7 @@ class MemoryStorage:
             return False
 
         # Check if ID exists first
-        with self._lock:
+        with self._write_lock:
             try:
                 exists = self.con.execute("SELECT count(*) FROM memory WHERE id=?", (uid,)).fetchone()[0]
             except Exception as e:
@@ -216,12 +242,19 @@ class MemoryStorage:
                 print(f"[MemoryStorage] Memory ID {uid} not found.")
                 return False
 
-            now_str = datetime.utcnow().isoformat()
-            self.con.execute("""
-                UPDATE memory
-                SET text = ?, last_accessed = ?
-                WHERE id = ?
-            """, (new_text, now_str, uid))
+            try:
+                self.con.begin()
+                now_str = datetime.utcnow().isoformat()
+                self.con.execute("""
+                    UPDATE memory
+                    SET text = ?, last_accessed = ?
+                    WHERE id = ?
+                """, (new_text, now_str, uid))
+                self.con.commit()
+            except Exception as e:
+                self.con.rollback()
+                logger.error(f"[MemoryStorage] update_memory failed for {uid}: {e}")
+                return False
 
         print(f"📝 Updated memory {uid} in storage.")
         return True
@@ -231,22 +264,29 @@ class MemoryStorage:
     # ------------------------------------------------------------------
     def add_goal(self, goal_data: dict):
         """Insert goal into DuckDB."""
-        with self._lock:
-            self.con.execute("""
-                INSERT INTO goals (
-                    id, text, priority, status, steps, metadata, plan_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                goal_data['id'],
-                goal_data.get('text', ''),
-                goal_data.get('priority', 1),
-                goal_data.get('status', 'pending'),
-                goal_data.get('steps', '[]'),
-                goal_data.get('metadata', '{}'),
-                goal_data.get('plan_id', None),
-                str(goal_data.get('created_at')),
-                str(goal_data.get('updated_at'))
-            ))
+        with self._write_lock:
+            try:
+                self.con.begin()
+                self.con.execute("""
+                    INSERT INTO goals (
+                        id, text, priority, status, steps, metadata, plan_id, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    goal_data['id'],
+                    goal_data.get('text', ''),
+                    goal_data.get('priority', 1),
+                    goal_data.get('status', 'pending'),
+                    goal_data.get('steps', '[]'),
+                    goal_data.get('metadata', '{}'),
+                    goal_data.get('plan_id', None),
+                    str(goal_data.get('created_at')),
+                    str(goal_data.get('updated_at'))
+                ))
+                self.con.commit()
+            except Exception as e:
+                self.con.rollback()
+                logger.error(f"[MemoryStorage] add_goal failed: {e}")
+                raise
         return goal_data['id']
 
     def get_goal(self, goal_id: str) -> dict:
@@ -288,8 +328,15 @@ class MemoryStorage:
         values.append(goal_id)
         set_query = ", ".join(set_clauses)
         try:
-            with self._lock:
-                self.con.execute(f"UPDATE goals SET {set_query} WHERE id=?", tuple(values))
+            with self._write_lock:
+                try:
+                    self.con.begin()
+                    self.con.execute(f"UPDATE goals SET {set_query} WHERE id=?", tuple(values))
+                    self.con.commit()
+                except Exception as e:
+                    self.con.rollback()
+                    logger.error(f"[MemoryStorage] Error updating goal {goal_id}: {e}")
+                    return False
             return True
         except Exception as e:
             print(f"[MemoryStorage] Error updating goal {goal_id}: {e}")
@@ -297,8 +344,15 @@ class MemoryStorage:
 
     def delete_goal(self, goal_id: str):
         try:
-            with self._lock:
-                self.con.execute("DELETE FROM goals WHERE id=?", (goal_id,))
+            with self._write_lock:
+                try:
+                    self.con.begin()
+                    self.con.execute("DELETE FROM goals WHERE id=?", (goal_id,))
+                    self.con.commit()
+                except Exception as e:
+                    self.con.rollback()
+                    logger.error(f"[MemoryStorage] Error deleting goal {goal_id}: {e}")
+                    return False
             return True
         except Exception as e:
             print(f"[MemoryStorage] Error deleting goal {goal_id}: {e}")

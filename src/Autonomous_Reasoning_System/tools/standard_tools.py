@@ -154,7 +154,7 @@ def register_tools(dispatcher, components: Dict[str, Any]):
         }
     )
 
-    def list_goals_handler(**kwargs):
+    def list_goals_handler(status: str = None, **kwargs):
         goal_manager = components.get("goal_manager")
         if goal_manager:
              # We access memory directly or via goal manager helper
@@ -162,6 +162,11 @@ def register_tools(dispatcher, components: Dict[str, Any]):
              active_goals = goal_manager.memory.get_active_goals()
              if active_goals.empty:
                  return "No active goals."
+
+             if status:
+                 active_goals = active_goals[active_goals['status'] == status]
+                 if active_goals.empty:
+                     return f"No goals with status '{status}'."
 
              summary = []
              for _, row in active_goals.iterrows():
@@ -172,25 +177,33 @@ def register_tools(dispatcher, components: Dict[str, Any]):
     dispatcher.register_tool(
         "list_goals",
         list_goals_handler,
-        schema={}
+        schema={
+            "status": {"type": str, "required": False}
+        }
     )
 
     # --- NEW CONTROLLER TOOLS FOR FAMILIES ---
 
     # 10. Handle Memory Ops (Unified)
-    def handle_memory_ops_handler(text: str, context: Dict[str, Any] = None, **kwargs):
-        # Check intent from context if available
-        intent = context.get("intent", "unknown") if context else "unknown"
+    def handle_memory_ops_handler(text: str, intent: str = None, context: Dict[str, Any] = None, **kwargs):
+        # Check intent from args or context if available
+        effective_intent = intent
+        if not effective_intent and context:
+             effective_intent = context.get("intent", "unknown")
+
+        if not effective_intent:
+             effective_intent = "unknown"
+
         memory = components.get("memory")
 
         if not memory:
             return "Memory component not available."
 
         # Dispatch based on intent
-        if intent in ["store", "save", "remind", "remember", "memorize"]:
+        if effective_intent in ["store", "save", "remind", "remember", "memorize"]:
              memory.store(f"Stored fact: {text}", memory_type="episodic", importance=1.0)
              return f"Stored: {text}"
-        elif intent in ["search", "recall", "find", "lookup"]:
+        elif effective_intent in ["search", "recall", "find", "lookup"]:
              results = memory.retrieve(text, k=3)
              return results
         else:
@@ -201,7 +214,10 @@ def register_tools(dispatcher, components: Dict[str, Any]):
     dispatcher.register_tool(
         "handle_memory_ops",
         handle_memory_ops_handler,
-        schema={"text": {"type": str, "required": True}}
+        schema={
+            "text": {"type": str, "required": True},
+            "intent": {"type": str, "required": False}
+        }
     )
 
     # 11. Handle Goal Ops (Unified)

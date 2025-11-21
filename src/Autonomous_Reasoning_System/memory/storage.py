@@ -153,6 +153,39 @@ class MemoryStorage:
         return True
 
     # ------------------------------------------------------------------
+    def get_due_reminders(self, lookahead_minutes: int = 5) -> pd.DataFrame:
+        """
+        Fetch reminders that are due now or within lookahead window.
+        """
+        try:
+             now_str = datetime.utcnow().isoformat()
+             # DuckDB date arithmetic might vary, simpler to just select all pending reminders and filter in python if complex
+             # But we can try simple timestamp comparison if formats are ISO.
+             # However, ISO strings are comparable.
+
+             # We assume scheduled_for is ISO string.
+             # We want scheduled_for <= now + lookahead
+             # Since we store as strings, string comparison works for ISO format if timezone is consistent (UTC).
+
+             # Calculating lookahead timestamp in python
+             limit_time = (datetime.utcnow() + pd.Timedelta(minutes=lookahead_minutes)).isoformat()
+
+             # Check status too if we had one for completion?
+             # The schema has 'status'. We assume 'pending' or NULL is active.
+             # But add_memory sets status to None.
+
+             return self.con.execute("""
+                SELECT * FROM memory
+                WHERE memory_type IN ('task', 'reminder')
+                  AND scheduled_for IS NOT NULL
+                  AND scheduled_for <= ?
+                  AND (status IS NULL OR status != 'completed')
+             """, (limit_time,)).df()
+        except Exception as e:
+             print(f"[MemoryStorage] Error fetching due reminders: {e}")
+             return pd.DataFrame()
+
+    # ------------------------------------------------------------------
     def update_memory(self, uid: str, new_text: str):
         """
         Update memory text by ID in DuckDB.

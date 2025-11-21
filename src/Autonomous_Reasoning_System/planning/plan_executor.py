@@ -68,14 +68,17 @@ class PlanExecutor:
                 self.plan_builder.update_step(plan.id, step.id, "complete", result=str(result.get("final_output")))
                 plan.current_index += 1
             else:
-                self.plan_builder.update_step(plan.id, step.id, "failed", result=str(result.get("errors")))
-                logger.error(f"Step failed after {attempts} attempts: {step.description}. Errors: {result.get('errors')}")
-                plan.status = "failed"
+                # Instead of failing the whole plan, we suspend it and ask for help.
+                self.plan_builder.update_step(plan.id, step.id, "suspended", result=f"Suspended after failure: {result.get('errors')}")
+                logger.error(f"Step failed after {attempts} attempts: {step.description}. Errors: {result.get('errors')}. Suspending plan.")
+                plan.status = "suspended"
+
                 return {
-                    "status": "failed",
+                    "status": "suspended",
                     "plan_id": plan_id,
                     "failed_step": step.description,
-                    "errors": result.get("errors")
+                    "errors": result.get("errors"),
+                    "message": f"I got stuck on step '{step.description}'. Error: {result.get('errors')}. Please provide guidance or modify the plan."
                 }
 
         plan.status = "complete"

@@ -25,3 +25,4 @@ Thumbs.db
 *.log
 *.tmp
 src/Autonomous_Reasoning_System/consolidated_app.py
+src/data/episodes.parquet

@@ -25,6 +25,37 @@ class ContextAdapter:
         self.turn_counter = 0
         self.history = [] # Short-term conversation history
 
+        # Load recent conversation history from persistence
+        if self.memory:
+            try:
+                # Handle both MemoryStorage and MemoryInterface wrapper
+                storage_ref = self.memory
+                if hasattr(self.memory, "storage"):
+                    storage_ref = self.memory.storage
+
+                if hasattr(storage_ref, "get_all_memories"):
+                    df = storage_ref.get_all_memories()
+                    if not df.empty:
+                        # Filter for episodes
+                        episodes = df[df["memory_type"] == "episode"]
+                        if not episodes.empty:
+                            # Sort by created_at
+                            episodes = episodes.sort_values("created_at", ascending=True)
+
+                            # Load last 10 interactions (approx 20 lines)
+                            recent = episodes.tail(10)
+
+                            for _, row in recent.iterrows():
+                                text = str(row.get("text", ""))
+                                # Split into lines to match history structure (User line, Tyrone line)
+                                for line in text.split("\n"):
+                                    if line.strip():
+                                        self.history.append(line.strip())
+
+                            print(f"[ContextAdapter] Restored {len(self.history)} lines of conversation history.")
+            except Exception as e:
+                print(f"[ContextAdapter] Error loading history: {e}")
+
     # ------------------------------------------------------------------
     def run(self, user_input: str, system_prompt: str = None) -> str:
         self.turn_counter += 1

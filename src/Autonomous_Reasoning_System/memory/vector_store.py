@@ -19,6 +19,8 @@ class DuckVSSVectorStore:
         # Ensure VSS extension is available
         self.con.execute("INSTALL vss;")
         self.con.execute("LOAD vss;")
+        # Enable persisted HNSW index storage (DuckDB defaults to off)
+        self.con.execute("SET hnsw_enable_experimental_persistence = true;")
 
         # Create table + HNSW index
         self.con.execute(

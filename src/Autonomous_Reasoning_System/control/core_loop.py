@@ -105,6 +105,7 @@ class CoreLoop:
 
         # Hydrate active plans
         self.plan_builder.load_active_plans()
+        self.clear_stale_state()
 
     def run_once(self, text: str, plan_id: str | None = None):
         """
@@ -227,6 +228,14 @@ class CoreLoop:
                 # Reinforce confidence
                 self.confidence.reinforce()
 
+        # User corrections get stored explicitly
+        lowered_text = text.lower()
+        if any(term in lowered_text for term in ["no ", "wrong", "not "]):
+            self.memory.remember(
+                text=f"USER CORRECTION: {text} → previous answer was wrong",
+                metadata={"type": "correction", "importance": 1.0}
+            )
+
         duration = time.time() - start_time
         Metrics().record_time("core_loop_duration", duration)
 
@@ -291,6 +300,17 @@ class CoreLoop:
     # ------------------------------------------------------------------
     # API helpers for background execution and streaming
     # ------------------------------------------------------------------
+    def clear_stale_state(self):
+        """Remove stale/unfinished goals from prior sessions to start clean."""
+        try:
+            with self.memory_storage._write_lock:
+                self.memory_storage.con.execute(
+                    "DELETE FROM goals WHERE status NOT IN ('completed', 'failed')"
+                )
+            logger.info("Cleared stale plans from previous sessions.")
+        except Exception as e:
+            logger.error(f"Failed to clear stale plans: {e}")
+
     def _send_to_user(self, message: str):
         """Send user-facing messages while filtering internal progress spam."""
         if not message:

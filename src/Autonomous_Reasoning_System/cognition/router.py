@@ -41,6 +41,22 @@ class Router:
         # === 1. Deterministic fast-paths (unchanged) ===
         q = text.lower()
         lower = text.lower()
+
+        # Direct personal fact assertions (store immediately)
+        if any(phrase in lower for phrase in [
+            "my wife", "my husband", "my birthday", "my name is",
+            "remember that", "i want you to remember", "i'm telling you",
+            "her birthday", "his birthday", "cornelia"
+        ]):
+            self.memory.remember(
+                text=text.strip() + " [PERSONAL FACT — USER CORRECTED]",
+                metadata={"type": "personal_fact", "importance": 1.0, "source": "direct_user_statement"}
+            )
+            return {
+                "intent": "fact_stored",
+                "pipeline": ["context_adapter"],
+                "reason": "Direct personal fact assertion — stored with max importance"
+            }
         if lower.startswith("remember") or "please remember" in lower or "just remember" in lower:
             # IMMEDIATELY store the raw user message as a sacred personal fact
             # Use self.memory instead of creating new instance

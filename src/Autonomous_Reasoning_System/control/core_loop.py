@@ -16,6 +16,7 @@ from Autonomous_Reasoning_System.control.attention_manager import attention
 from Autonomous_Reasoning_System.tools.standard_tools import register_tools
 from Autonomous_Reasoning_System.llm.context_adapter import ContextAdapter
 from Autonomous_Reasoning_System.control.goal_manager import GoalManager
+from Autonomous_Reasoning_System.tools.system_tools import get_current_time, get_current_location
 
 # Dependencies for injection
 from Autonomous_Reasoning_System.memory.storage import MemoryStorage
@@ -46,6 +47,7 @@ class CoreLoop:
         # 3. Initialize Components with injected dependencies
         self.plan_builder = PlanBuilder(memory_storage=self.memory_storage)
         self.context_adapter = ContextAdapter(memory_storage=self.memory_storage)
+
         self.reflector = ReflectionInterpreter(memory_storage=self.memory_storage)
         self.learner = LearningManager(memory_storage=self.memory_storage)
         self.confidence = ConfidenceManager(memory_storage=self.memory_storage)
@@ -226,7 +228,22 @@ class CoreLoop:
             "reflection": reflection_data
         }
 
+    def initialize_context(self):
+        """Initializes the context with system information (time, location)."""
+        # Find Feet (Initialize Context)
+        try:
+            current_time = get_current_time()
+            current_location = get_current_location()
+            logger.info(f"[STARTUP] Feet found: {current_location} at {current_time}")
+            self.context_adapter.set_startup_context({
+                "Current Time": current_time,
+                "Current Location": current_location
+            })
+        except Exception as e:
+            logger.error(f"[STARTUP] Failed to find feet: {e}")
+
     def run_interactive(self):
+        self.initialize_context()
         self.running = True
         logger.info("Tyrone Core Loop is running. Type 'exit' to stop.")
 

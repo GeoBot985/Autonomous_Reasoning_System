@@ -5,7 +5,6 @@ import argparse
 import logging
 import duckdb
 import pandas as pd
-import faiss
 import pickle
 from pathlib import Path
 from Autonomous_Reasoning_System.infrastructure import config
@@ -79,22 +78,6 @@ def bootstrap_runtime():
             df = pd.DataFrame(columns=cols)
             df.to_parquet(p_path)
             logger.info(f"Created empty {filename}.")
-
-    # 3. Create Empty FAISS Index
-    faiss_path = data_dir / "vector_index.faiss"
-    if not faiss_path.exists():
-        # Dimension 384 is standard for all-MiniLM-L6-v2 which seems to be implied (default in embeddings.py usually)
-        # But let's verify if we can find the dimension. vector_store.py defaults to 384.
-        index = faiss.IndexFlatIP(384)
-        faiss.write_index(index, str(faiss_path))
-        logger.info("Created empty FAISS index.")
-
-    # 4. Create Empty Metadata Pickle
-    meta_path = data_dir / "vector_meta.pkl"
-    if not meta_path.exists():
-        with open(meta_path, "wb") as f:
-            pickle.dump([], f)
-        logger.info("Created empty metadata pickle.")
 
     logger.info("Initialized fresh memory store (first launch).")
 

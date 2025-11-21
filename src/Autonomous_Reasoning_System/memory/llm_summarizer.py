@@ -2,6 +2,7 @@
 import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from Autonomous_Reasoning_System.infrastructure import config
 
 
 def summarize_with_local_llm(text: str) -> str:
@@ -13,16 +14,8 @@ def summarize_with_local_llm(text: str) -> str:
     if not text or not text.strip():
         return "(no content to summarize)"
 
-    # --- CONFIG IMPORT (live reload each call) ---
-    try:
-        from Autonomous_Reasoning_System.infrastructure import config
-        provider = getattr(config, "LLM_PROVIDER", "ollama")
-        model = getattr(config, "DEFAULT_MODEL", "gemma3:4b")
-        print(f"[DEBUG] Using provider={provider}, model={model}")
-    except Exception as e:
-        print(f"[WARN] Could not import infrastructure.config ({e})")
-        provider, model = "ollama", "gemma3:4b"
-    # ------------------------------------------------
+    provider = getattr(config, "LLM_PROVIDER", "ollama")
+    model = getattr(config, "DEFAULT_MODEL", "gemma3:4b")
 
     today = datetime.now(ZoneInfo("Africa/Johannesburg")).strftime("%d %B %Y")
 

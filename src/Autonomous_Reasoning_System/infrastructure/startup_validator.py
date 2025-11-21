@@ -3,7 +3,6 @@ import sys
 import logging
 import duckdb
 import pandas as pd
-import faiss
 import pickle
 from pathlib import Path
 from Autonomous_Reasoning_System.infrastructure import config
@@ -59,28 +58,5 @@ def validate_startup():
         except Exception as e:
             print(f"CRITICAL ERROR: Parquet file corrupted: {p_path} ({e})")
             sys.exit(1)
-
-    # 3. Check FAISS Index
-    faiss_path = data_dir / "vector_index.faiss"
-    if not faiss_path.exists():
-        print(f"CRITICAL ERROR: FAISS index missing at {faiss_path}")
-        sys.exit(1)
-    try:
-        faiss.read_index(str(faiss_path))
-    except Exception as e:
-        print(f"CRITICAL ERROR: FAISS index corrupted: {e}")
-        sys.exit(1)
-
-    # 4. Check Metadata Pickle
-    meta_path = data_dir / "vector_meta.pkl"
-    if not meta_path.exists():
-        print(f"CRITICAL ERROR: Metadata pickle missing at {meta_path}")
-        sys.exit(1)
-    try:
-        with open(meta_path, "rb") as f:
-            pickle.load(f)
-    except Exception as e:
-        print(f"CRITICAL ERROR: Metadata pickle corrupted: {e}")
-        sys.exit(1)
 
     print("[Startup Validator] System integrity verified. Proceeding to boot.")

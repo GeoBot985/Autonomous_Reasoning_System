@@ -21,42 +21,20 @@ class MemoryInterface:
     def __init__(self, memory_storage: MemoryStorage = None, embedding_model: EmbeddingModel = None, vector_store=None):
         self.persistence = get_persistence_service()
 
-        # Use injected dependencies or instantiate new ones (avoiding global state if possible)
-        # Ideally these should be passed from CoreLoop, but for now we support standalone init
-        # by creating them if missing, though this might create multiple connections if not careful.
-        # However, MemoryInterface is often the entry point.
-
         self.embedder = embedding_model or EmbeddingModel()
 
-        # Load data from disk
         print("💾 Loading memory from persistence layer...")
-        # Note: With the new Persistent DuckDB, loading df might not be needed for initialization
-        # but for VectorStore consistency checks.
-        # The new MemoryStorage handles its own connection.
-        # BUT, we still need to support loading legacy Parquet if that's what persistence does,
-        # OR we assume persistence.load_* returns data frames we might want to migrate?
-        # The user instructions said "Move the table creation logic... into an init_db() method".
-        # It also said "Delete the logic that reads the parquet file into a dataframe".
-        # So we likely don't need to load deterministic memory into DF here just to pass to storage.
 
-        # Initialize VSS-backed vector store (kept inside DuckDB)
         self.vector_store = vector_store or DuckVSSVectorStore(
             db_path=memory_storage.db_path if memory_storage else None,
             dim=self.embedder.dim if hasattr(self.embedder, "dim") else 384
         )
 
-        # For Storage:
-        # If injected, use it. If not, create it.
-        # Note: Storage now handles its own DB connection.
         if memory_storage:
             self.storage = memory_storage
         else:
             self.storage = MemoryStorage(embedding_model=self.embedder, vector_store=self.vector_store)
 
-        # EpisodicMemory is not a singleton in the same way, we create it here
-        # It might need loading from parquet still if it hasn't been migrated to DuckDB?
-        # The refactor instructions focused on MemoryStorage (symbolic memory).
-        # EpisodicMemory might still use DataFrames.
         ep_df = self.persistence.load_episodic_memory()
         self.episodes = EpisodicMemory(initial_df=ep_df)
 
@@ -74,21 +52,6 @@ class MemoryInterface:
         """
         with memory_write_lock:
             print("💾 Saving memory state...")
-            # DuckDB is auto-persisted, but we might want to checkpoint or similar?
-            # No, DuckDB persistent file is always saved.
-            # But we might still need to save VectorStore (FAISS) and EpisodicMemory (if not in DB).
-
-            # We might not need to save deterministic memory anymore if it's in DuckDB directly.
-            # But persistence.save_deterministic_memory writes parquet.
-            # If we want to keep parquet as backup or if other tools read it, we can keep it.
-            # But the instruction "Delete the logic that reads the parquet file" implies we are moving away.
-            # However, for safety, let's keep saving other components.
-
-            # self.persistence.save_deterministic_memory(self.storage.get_all_memories()) # Maybe redundant now
-
-            # Goals are also in DB now.
-            # self.persistence.save_goals(self.storage.get_all_goals())
-
             self.persistence.save_episodic_memory(self.episodes.get_all_episodes())
             print("✅ Memory saved.")
 

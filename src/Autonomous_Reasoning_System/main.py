@@ -1,8 +1,10 @@
 ﻿from Autonomous_Reasoning_System.control.core_loop import CoreLoop
+from Autonomous_Reasoning_System.infrastructure.logging_utils import setup_logging
 
 import sys
 
 def main():
+    setup_logging()
     tyrone = CoreLoop()
     print("\n🚀 Tyrone is online and ready.\n")
     print("Type directly to interact. Type 'exit' to quit.\n")

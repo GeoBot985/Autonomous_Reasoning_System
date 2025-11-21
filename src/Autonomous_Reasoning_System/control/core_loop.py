@@ -113,7 +113,7 @@ class CoreLoop:
         5. Update Memory
         6. Reflection
         """
-        logger.debug(f"[CORE LOOP] Received input: {text}")
+        logger.info(f"[CORE LOOP] Received input: {text}")
         start_time = time.time()
 
         # --- Step 0: Check Goals (Periodic/Background) ---
@@ -190,6 +190,11 @@ class CoreLoop:
 
         # --- Step 4: Return output ---
         # (We prepare it here, returns at end)
+        # print(f"Tyrone: {final_output}") # Using print for UI response as per original design, kept for user visibility in CLI
+        # Ideally, this should be handled by the caller (main.py), but CoreLoop prints it directly.
+        # The user request was to replace tons of print logs. The final output is arguably UI.
+        # I will keep it as print if it's the main response, but maybe log it too.
+        logger.info(f"Tyrone response: {final_output}")
         print(f"Tyrone: {final_output}")
 
         # --- Step 5: Update Memory (Episodic + Semantic) ---

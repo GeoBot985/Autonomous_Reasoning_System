@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from Autonomous_Reasoning_System.control.core_loop import CoreLoop
+from Autonomous_Reasoning_System.planning.plan_builder import Plan, Step
 
 @patch("Autonomous_Reasoning_System.control.core_loop.Router")
 @patch("Autonomous_Reasoning_System.control.core_loop.IntentAnalyzer")
@@ -36,31 +37,60 @@ def test_core_loop_integration(
     mock_reflector_inst = MagicMock()
     mock_ReflectionInterpreter.return_value = mock_reflector_inst
 
+    # Setup PlanBuilder mock to return a valid plan so CoreLoop doesn't crash on plan.id
+    mock_plan_builder_inst = MagicMock()
+    mock_PlanBuilder.return_value = mock_plan_builder_inst
+
+    dummy_plan = Plan(id="p1", goal_id="g1", title="test", steps=[])
+    mock_plan_builder_inst.new_goal.return_value = MagicMock(id="g1")
+    mock_plan_builder_inst.build_plan.return_value = dummy_plan
+
     loop = CoreLoop()
 
     # Test case 1: Reflection
     # The router returns "pipeline", which is a list of strings.
-    # The loop iterates over these strings.
-    mock_router_inst.route.return_value = {"intent": "reflect", "pipeline": ["ReflectionInterpreter"], "reason": "User asked"}
+    mock_router_inst.resolve.return_value = {
+        "intent": "reflect",
+        "family": "reflection",
+        "pipeline": ["perform_reflection"],
+        "reason": "User asked"
+    }
     mock_memory_inst.recall.return_value = "Past memories..."
 
     mock_reflector_inst.interpret.return_value = {"insight": "Reflection Output"}
 
     result = loop.run_once("Reflect on work")
 
-    assert result["reflection_data"] == {"insight": "Reflection Output"}
+    # CoreLoop now uses "reflection" key
+    assert result["reflection"] == {"insight": "Reflection Output"}
 
-    # Test case 2: Execution (ContextAdapter in this case as "pipeline" contains "ContextAdapter"?)
-    # Actually, let's check what `plan_execute` pipeline usually maps to.
-    # If it maps to "ContextAdapter", we need to mock that.
+    # Test case 2: Execution
+    mock_router_inst.resolve.return_value = {
+        "intent": "execute",
+        "family": "tool_execution",
+        "pipeline": ["ContextAdapter"],
+        "reason": "User asked"
+    }
 
-    mock_router_inst.route.return_value = {"intent": "execute", "pipeline": ["ContextAdapter"], "reason": "User asked"}
+    # Need to mock PlanExecutor behavior since CoreLoop uses it
+    # loop.plan_executor is a real instance but with mocked PlanBuilder/Router/Dispatcher
+    # We need to make sure loop.plan_executor.execute_plan returns something.
 
-    with patch("Autonomous_Reasoning_System.llm.context_adapter.ContextAdapter") as mock_ContextAdapter:
-        mock_adapter_inst = MagicMock()
-        mock_ContextAdapter.return_value = mock_adapter_inst
-        mock_adapter_inst.run.return_value = "Execution Result"
+    # Wait, CoreLoop constructs PlanExecutor internally.
+    # We can mock the instance on the loop object.
+    loop.plan_executor = MagicMock()
+    loop.plan_executor.execute_plan.return_value = {
+        "status": "complete",
+        "summary": {"summary_text": "Done"},
+        "final_output": "Execution Result"
+    }
 
-        result = loop.run_once("Do something")
+    # Need to ensure PlanBuilder returns a plan with steps if we want final_output from steps?
+    # No, my fix allows final_output in execute_plan return dict.
+    # Let's verify run_once uses it.
 
-        assert "Execution Result" in result["summary"]
+    dummy_plan.steps = [Step(id="s1", description="d", result="Execution Result", status="complete")]
+
+    result = loop.run_once("Do something")
+
+    assert "Execution Result" in result["summary"]

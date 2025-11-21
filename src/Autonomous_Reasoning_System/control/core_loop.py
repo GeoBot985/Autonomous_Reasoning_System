@@ -241,6 +241,7 @@ class CoreLoop:
         }
 
         self._broadcast_thought(plan.id, f"Plan status: {status}. Output: {final_output}")
+        self._send_to_user(final_output)
         return result
 
     def initialize_context(self):
@@ -290,6 +291,31 @@ class CoreLoop:
     # ------------------------------------------------------------------
     # API helpers for background execution and streaming
     # ------------------------------------------------------------------
+    def _send_to_user(self, message: str):
+        """Send user-facing messages while filtering internal progress spam."""
+        if not message:
+            return
+        spam_markers = [
+            "Plan update",
+            "step",
+            "Current step: None",
+            "Reminder: Continue plan",
+            "Last action result",
+            "0/1 steps complete",
+            "%. Current step:",
+        ]
+        if any(marker in message for marker in spam_markers):
+            logger.debug(f"[INTERNAL] {message}")
+            return
+        print(f"Tyrone> {message}")
+        # Broadcast to any stream queues if present
+        for queues in self._stream_subscribers.values():
+            for q in queues:
+                try:
+                    q.put_nowait(message)
+                except Exception:
+                    continue
+
     def run_background(self, goal: str, plan_id: str):
         """Run a goal asynchronously for API calls."""
         asyncio.get_event_loop().create_task(self._run_goal_async(goal, plan_id))
@@ -324,6 +350,20 @@ class CoreLoop:
         """Push messages to SSE subscribers."""
         if not plan_id or plan_id not in self._stream_subscribers:
             return
+        # Filter spammy internal chatter
+        if thought:
+            spam_markers = [
+                "Plan update",
+                "step",
+                "Current step: None",
+                "Reminder: Continue plan",
+                "Last action result",
+                "0/1 steps complete",
+                "%. Current step:",
+            ]
+            if any(marker in thought for marker in spam_markers):
+                logger.debug(f"[INTERNAL] {thought}")
+                return
         for q in list(self._stream_subscribers.get(plan_id, [])):
             try:
                 q.put_nowait(thought)

@@ -4,45 +4,70 @@ import tempfile
 import os
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+import pandas as pd
 
 @pytest.fixture(scope="function")
 def temp_db_path():
     # Create a temporary directory
     temp_dir = tempfile.mkdtemp()
-    db_path = os.path.join(temp_dir, "test_memory.parquet")
+    db_path = os.path.join(temp_dir, "test_memory.duckdb")
     yield db_path
     # Cleanup
-    shutil.rmtree(temp_dir)
+    try:
+        shutil.rmtree(temp_dir)
+    except Exception:
+        pass
 
 @pytest.fixture(scope="function")
-def mock_singletons(temp_db_path):
-    # We want to control the initialization of singletons.
-    # Since get_memory_storage calls MemoryStorage(), which uses "data" dir by default,
-    # we need to patch where MemoryStorage looks, OR we need to reset the singleton
-    # and instantiate it with our path.
+def mock_embedding_model():
+    mock = MagicMock()
+    # Mock embed to return a list of floats of correct dimension (384 for all-MiniLM-L6-v2)
+    mock.embed.return_value = [0.1] * 384
+    return mock
 
-    # But get_memory_storage doesn't take arguments.
-    # So we should probably patch MemoryStorage class in storage.py
+@pytest.fixture(scope="function")
+def mock_vector_store():
+    mock = MagicMock()
+    mock.metadata = []
+    mock.search.return_value = []
+    return mock
 
-    # Reset singletons first
-    with patch("Autonomous_Reasoning_System.memory.singletons._memory_storage", new=None), \
-         patch("Autonomous_Reasoning_System.memory.singletons._vector_store", new=None), \
-         patch("Autonomous_Reasoning_System.memory.singletons._embedding_model", new=None):
+@pytest.fixture(scope="function")
+def memory_storage(temp_db_path, mock_embedding_model, mock_vector_store):
+    # Create real MemoryStorage with temp DB
+    from Autonomous_Reasoning_System.memory.storage import MemoryStorage
+    storage = MemoryStorage(
+        db_path=temp_db_path,
+        embedding_model=mock_embedding_model,
+        vector_store=mock_vector_store
+    )
+    return storage
 
-         # We also need to patch EmbeddingModel to avoid loading it
-         with patch("Autonomous_Reasoning_System.memory.singletons.EmbeddingModel") as MockEmbed, \
-              patch("Autonomous_Reasoning_System.memory.storage.MemoryStorage") as RealMemoryStorage: # Wait, if we patch it we replace it.
+@pytest.fixture(scope="function")
+def memory_interface(memory_storage, mock_embedding_model, mock_vector_store):
+    # We need to patch get_persistence_service because MemoryInterface uses it
+    with patch("Autonomous_Reasoning_System.memory.memory_interface.get_persistence_service") as mock_get_persist:
+        mock_persist = MagicMock()
+        # Mock loading methods to return empty data or minimal valid data
+        mock_persist.load_deterministic_memory.return_value = pd.DataFrame(columns=["id", "text", "memory_type", "created_at", "last_accessed", "importance", "scheduled_for", "status", "source"])
+        mock_persist.load_goals.return_value = pd.DataFrame(columns=["id", "text", "priority", "status", "steps", "metadata", "created_at", "updated_at"])
+        mock_persist.load_episodic_memory.return_value = pd.DataFrame()
+        mock_persist.load_vector_index.return_value = None
+        mock_persist.load_vector_metadata.return_value = []
 
-              # Actually, we want to use the REAL MemoryStorage but with a different path.
-              # But the singleton function doesn't pass the path.
-              # We can patch the 'Path("data")' inside storage.py or simply patch the class to default to temp path?
+        mock_get_persist.return_value = mock_persist
 
-              # Easier: Mock the singletons entirely for UNIT tests.
-              # For INTEGRATION tests, we might want the real ones but pointed to temp dir.
+        from Autonomous_Reasoning_System.memory.memory_interface import MemoryInterface
 
-              # Let's provide a fixture that mocks them for unit tests.
-              mock_embed = MagicMock()
-              mock_embed.embed.return_value = [0.1] * 384
-              MockEmbed.return_value = mock_embed
+        # Instantiate with injected dependencies
+        interface = MemoryInterface(
+            memory_storage=memory_storage,
+            embedding_model=mock_embedding_model,
+            vector_store=mock_vector_store
+        )
+        yield interface
 
-              yield
+@pytest.fixture(scope="function")
+def mock_plan_builder(memory_storage):
+    from Autonomous_Reasoning_System.planning.plan_builder import PlanBuilder
+    return PlanBuilder(memory_storage=memory_storage)

@@ -1,8 +1,8 @@
-
 import unittest
 from unittest.mock import MagicMock, patch
 import sys
 import os
+import pandas as pd
 
 # Ensure src is in path
 sys.path.append(os.path.join(os.getcwd(), "src"))
@@ -11,18 +11,33 @@ from Autonomous_Reasoning_System.memory.memory_interface import MemoryInterface
 
 class TestMemoryInterface(unittest.TestCase):
     def setUp(self):
-        # Mock singletons to avoid real DB/Embedding usage
+        # Mock dependencies
         self.mock_storage = MagicMock()
         self.mock_episodes = MagicMock()
         self.mock_embedder = MagicMock()
         self.mock_vector_store = MagicMock()
+        self.mock_persistence = MagicMock()
 
-        with patch("Autonomous_Reasoning_System.memory.memory_interface.get_memory_storage", return_value=self.mock_storage), \
-             patch("Autonomous_Reasoning_System.memory.memory_interface.EpisodicMemory", return_value=self.mock_episodes), \
-             patch("Autonomous_Reasoning_System.memory.memory_interface.get_embedding_model", return_value=self.mock_embedder), \
-             patch("Autonomous_Reasoning_System.memory.memory_interface.get_vector_store", return_value=self.mock_vector_store):
+        # Mock loading methods of persistence
+        self.mock_persistence.load_deterministic_memory.return_value = pd.DataFrame(columns=["id", "text"])
+        self.mock_persistence.load_goals.return_value = pd.DataFrame()
+        self.mock_persistence.load_episodic_memory.return_value = pd.DataFrame()
+        self.mock_persistence.load_vector_index.return_value = None
+        self.mock_persistence.load_vector_metadata.return_value = []
 
-            self.mi = MemoryInterface()
+        # Mock get_all_memories for sync check
+        self.mock_storage.get_all_memories.return_value = pd.DataFrame(columns=["id", "text"])
+        self.mock_vector_store.metadata = []
+
+        with patch("Autonomous_Reasoning_System.memory.memory_interface.get_persistence_service", return_value=self.mock_persistence), \
+             patch("Autonomous_Reasoning_System.memory.memory_interface.EpisodicMemory", return_value=self.mock_episodes):
+
+            # Instantiate with injected mocks
+            self.mi = MemoryInterface(
+                memory_storage=self.mock_storage,
+                embedding_model=self.mock_embedder,
+                vector_store=self.mock_vector_store
+            )
 
     def test_remember(self):
         self.mock_storage.add_memory.return_value = "uuid-123"

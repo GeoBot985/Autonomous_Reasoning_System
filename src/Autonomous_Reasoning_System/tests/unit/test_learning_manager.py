@@ -3,13 +3,11 @@ import pytest
 from unittest.mock import MagicMock, patch
 from Autonomous_Reasoning_System.cognition.learning_manager import LearningManager
 
-@patch("Autonomous_Reasoning_System.cognition.learning_manager.get_memory_storage")
-def test_learning_manager_pipeline(mock_get_memory_storage):
+def test_learning_manager_pipeline():
     # Setup mock memory
     mock_memory = MagicMock()
-    mock_get_memory_storage.return_value = mock_memory
 
-    lm = LearningManager()
+    lm = LearningManager(memory_storage=mock_memory)
 
     # Ingest sample experiences
     sample_data = [
@@ -24,7 +22,12 @@ def test_learning_manager_pipeline(mock_get_memory_storage):
     print("✅ Summary:", summary["summary"])
 
     assert "summary" in summary
-    assert "positive" in summary["summary"] or "negative" in summary["summary"] or "neutral" in summary["summary"]
+    # Should call memory.add_memory
+    mock_memory.add_memory.assert_called()
+
+    # Mock get_all_memories to test drift correction
+    import pandas as pd
+    mock_memory.get_all_memories.return_value = pd.DataFrame()
 
     drift = lm.perform_drift_correction()
     print("✅ Drift correction:", drift)

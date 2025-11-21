@@ -1,9 +1,9 @@
-from Autonomous_Reasoning_System.memory.singletons import get_memory_storage
+from Autonomous_Reasoning_System.memory.storage import MemoryStorage
 import pandas as pd
 import textwrap
 
 def read_document_from_memory(source_name: str = None, limit: int = 20):
-    memory = get_memory_storage()
+    memory = MemoryStorage()
     df = memory.get_all_memories()
 
     if not isinstance(df, pd.DataFrame):

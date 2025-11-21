@@ -8,12 +8,12 @@ import threading
 
 from datetime import datetime, timedelta
 from collections import defaultdict
-from ..memory.singletons import get_memory_storage
+# from ..memory.singletons import get_memory_storage # Deleted
 
 
 class LearningManager:
-    def __init__(self):
-        self.memory = get_memory_storage()
+    def __init__(self, memory_storage=None):
+        self.memory = memory_storage
         self.experience_buffer = []   # incoming validation results
         self.last_summary_time = datetime.utcnow()
         self.lock = threading.Lock()
@@ -64,8 +64,8 @@ class LearningManager:
             pos = counts.get("positive", 0)
             neg = counts.get("negative", 0)
             neu = counts.get("neutral", 0)
-            dominant_feeling = max(counts, key=counts.get)
-            dominant_intent = max(intents, key=intents.get)
+            dominant_feeling = max(counts, key=counts.get) if counts else "neutral"
+            dominant_intent = max(intents, key=intents.get) if intents else "unknown"
 
             lesson_text = (
                 f"In the last {window_minutes} minutes, most experiences felt {dominant_feeling}. "
@@ -74,11 +74,12 @@ class LearningManager:
             )
 
             # ✅ Thread-safe write to DuckDB-backed memory
-            self.memory.add_memory(
-                text=lesson_text,
-                memory_type="reflection",
-                importance=0.6,
-            )
+            if self.memory:
+                self.memory.add_memory(
+                    text=lesson_text,
+                    memory_type="reflection",
+                    importance=0.6,
+                )
             self.last_summary_time = now
 
             return {
@@ -97,6 +98,9 @@ class LearningManager:
         Example placeholder for balancing memory — in future, this can downweight stale,
         repetitive, or highly negative entries.
         """
+        if not self.memory:
+            return "Memory storage not available."
+
         # ✅ Compatible call for any MemoryStorage version
         if hasattr(self.memory, "get_all"):
             df = self.memory.get_all()

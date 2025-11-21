@@ -1,6 +1,5 @@
 # Autonomous_Reasoning_System/llm/consolidator.py
 
-from ..memory.singletons import get_memory_storage
 from .engine import call_llm
 
 
@@ -9,13 +8,16 @@ class ReasoningConsolidator:
     Periodically summarizes recent episodes into long-term summaries.
     """
 
-    def __init__(self):
-        self.memory = get_memory_storage()
+    def __init__(self, memory_storage=None):
+        self.memory = memory_storage
 
     def consolidate_recent(self, limit: int = 5):
         """
         Fetches recent episodic memories and generates a concise summary.
         """
+        if not self.memory:
+            return "Memory storage not available."
+
         try:
             df = self.memory.search_memory("Assistant:")
             if df.empty:

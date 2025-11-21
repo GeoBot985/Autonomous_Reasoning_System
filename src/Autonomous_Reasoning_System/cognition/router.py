@@ -2,11 +2,15 @@ import json
 import re
 from Autonomous_Reasoning_System.llm.engine import call_llm
 from Autonomous_Reasoning_System.memory.memory_interface import MemoryInterface
+from Autonomous_Reasoning_System.control.dispatcher import Dispatcher
 
 
 class Router:
-    def __init__(self):
-        self.memory = MemoryInterface()
+    def __init__(self, dispatcher: Dispatcher = None, memory_interface: MemoryInterface = None):
+        self.dispatcher = dispatcher
+        # Use injected MemoryInterface or create a default one (fallback behavior)
+        # In CoreLoop we inject it, so we avoid duplicate VectorStores.
+        self.memory = memory_interface or MemoryInterface()
 
         # registry of modules Tyrone can use
         self.module_registry = [
@@ -17,7 +21,7 @@ class Router:
             {"name": "ReflectionInterpreter", "desc": "handles reflective or summary questions"},
             {"name": "Consolidator", "desc": "summarizes recent reasoning"},
             {"name": "DeterministicResponder", "desc": "handles factual or deterministic queries like time, math, or definitions"},
-
+            {"name": "PlanBuilder", "desc": "creates plans for tasks"},
         ]
 
         self.system_prompt = (
@@ -27,44 +31,49 @@ class Router:
             "Do not include any explanations or markdown outside the JSON."
         )
 
+    # Alias route to resolve if needed, or change caller
+    def resolve(self, text: str, context: str = None) -> dict:
+        return self.route(text, context)
+
     def route(self, text: str, context: str = None) -> dict:
         # === 1. Deterministic fast-paths (unchanged) ===
         q = text.lower()
         lower = text.lower()
         if lower.startswith("remember") or "please remember" in lower or "just remember" in lower:
             # IMMEDIATELY store the raw user message as a sacred personal fact
-            from Autonomous_Reasoning_System.memory.memory_interface import MemoryInterface
-            MemoryInterface().store(
+            # Use self.memory instead of creating new instance
+            self.memory.remember(
                 text=text.strip(),
-                memory_type="personal_fact",
-                importance=1.0
+                metadata={"type": "personal_fact", "importance": 1.0}
             )
             return {
                 "intent": "fact_stored",
-                "pipeline": ["ContextAdapter"],
+                "family": "memory",
+                "pipeline": ["context_adapter"],
                 "reason": "Direct personal fact storage triggered"
             }
 
         if re.search(r"\b(learn|remember|recall|quantization|moondream|visionassist)\b", q):
-            return {"intent": "recall", "pipeline": ["IntentAnalyzer", "RetrievalOrchestrator", "ReflectionInterpreter"], "reason": "Explicit recall request"}
+            return {"intent": "recall", "family": "memory", "pipeline": ["intent_analyzer", "memory", "reflector"], "reason": "Explicit recall request"}
 
         if re.search(r"\b(plan|schedule|task|todo|reminder)\b", q):
-            return {"intent": "plan", "pipeline": ["IntentAnalyzer", "PlanBuilder"], "reason": "Planning request"}
+            return {"intent": "plan", "family": "planning", "pipeline": ["intent_analyzer", "plan_builder"], "reason": "Planning request"}
 
         if re.search(r"\b(reflect|progress|confidence|feeling|learned)\b", q):
-            return {"intent": "reflect", "pipeline": ["IntentAnalyzer", "ReflectionInterpreter"], "reason": "Explicit reflection"}
+            return {"intent": "reflect", "family": "cognition", "pipeline": ["intent_analyzer", "reflector"], "reason": "Explicit reflection"}
 
         if re.search(r"\b(time|date|today|now|calculate|plus|minus|divided|times)\b", q):
-            return {"intent": "deterministic", "pipeline": ["DeterministicResponder"], "reason": "Time/math query"}
+            return {"intent": "deterministic", "family": "tool", "pipeline": ["deterministic_responder"], "reason": "Time/math query"}
 
         if re.search(r"\b(capital|country|population|who|when|where|define|meaning of)\b", q):
-            return {"intent": "fact_query", "pipeline": ["IntentAnalyzer", "ContextAdapter", "ReflectionInterpreter"], "reason": "General knowledge query"}
+            return {"intent": "fact_query", "family": "qa", "pipeline": ["intent_analyzer", "context_adapter", "reflector"], "reason": "General knowledge query"}
 
         if "birthday" in q or ("cornelia" in q and any(word in q for word in ["is", "="])) or "remember" in q.lower():
-            return {"intent": "store_fact", "pipeline": ["MemoryInterface"], "reason": "Direct fact storage"}
+            return {"intent": "store_fact", "family": "memory", "pipeline": ["memory"], "reason": "Direct fact storage"}
 
         # === 2. Semantic routing with bulletproof JSON parsing ===
-        recall = self.memory.search_similar(text)
+        # Use retrieve() instead of search_similar (new API)
+        recall = self.memory.retrieve(text)
         recall_hint = f"\nRelevant memory: {recall[0]['text']}" if recall else "\nNo relevant memory."
 
         modules_json = json.dumps(self.module_registry, indent=2)
@@ -106,9 +115,18 @@ class Router:
             decision.setdefault("intent", "unknown")
             decision.setdefault("reason", "Parsed successfully")
 
+            # Normalize pipeline names to snake_case to match tool registration
+            # e.g. ContextAdapter -> context_adapter
+            normalized_pipeline = []
+            for tool in decision["pipeline"]:
+                normalized = re.sub(r'(?<!^)(?=[A-Z])', '_', tool).lower()
+                normalized_pipeline.append(normalized)
+
+            decision["pipeline"] = normalized_pipeline
+
             # Force ContextAdapter if missing (critical for grounding)
-            if "ContextAdapter" not in decision["pipeline"]:
-                decision["pipeline"].append("ContextAdapter")
+            if "context_adapter" not in decision["pipeline"]:
+                decision["pipeline"].append("context_adapter")
 
             print(f"[ROUTER] Success → {decision['intent']} | {decision['pipeline']}")
             return decision
@@ -118,7 +136,7 @@ class Router:
             # Final desperate fallback — but now extremely rare
             return {
                 "intent": "query",
-                "pipeline": ["ContextAdapter"],
+                "family": "qa",
+                "pipeline": ["context_adapter"],
                 "reason": "Router JSON failed — using safe single-module path",
             }
- 

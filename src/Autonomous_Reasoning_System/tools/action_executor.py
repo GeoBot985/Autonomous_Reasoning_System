@@ -6,13 +6,13 @@ Bridges Tyrone's planning system to external tools or cognitive functions.
 Given a step description, it resolves an appropriate tool and executes it.
 """
 
-from Autonomous_Reasoning_System.memory.singletons import get_memory_storage
+from Autonomous_Reasoning_System.memory.storage import MemoryStorage
 from Autonomous_Reasoning_System.tools import ocr  # example tool module
 
 
 class ActionExecutor:
-    def __init__(self):
-        self.memory = get_memory_storage()
+    def __init__(self, memory_storage=None):
+        self.memory = memory_storage or MemoryStorage()
 
     # ---------------------- Dispatcher ----------------------
     def execute_step(self, step_description: str, workspace) -> dict:

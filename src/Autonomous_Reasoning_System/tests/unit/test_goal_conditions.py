@@ -1,8 +1,9 @@
 import pytest
 from Autonomous_Reasoning_System.planning.plan_builder import PlanBuilder
 
-def test_goal_conditions():
-    pb = PlanBuilder()
+def test_goal_conditions(mock_plan_builder):
+    # Use mock_plan_builder fixture which injects memory storage
+    pb = mock_plan_builder
     goal = pb.new_goal("Build OCR module")
 
     print("Goal:", goal.text)

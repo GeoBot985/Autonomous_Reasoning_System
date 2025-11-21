@@ -17,6 +17,11 @@ from Autonomous_Reasoning_System.tools.standard_tools import register_tools
 from Autonomous_Reasoning_System.llm.context_adapter import ContextAdapter
 from Autonomous_Reasoning_System.control.goal_manager import GoalManager
 
+# Dependencies for injection
+from Autonomous_Reasoning_System.memory.storage import MemoryStorage
+from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
+from Autonomous_Reasoning_System.memory.vector_store import VectorStore
+
 logger = logging.getLogger(__name__)
 
 class CoreLoop:
@@ -24,22 +29,38 @@ class CoreLoop:
         # 1. Initialize Dispatcher first
         self.dispatcher = Dispatcher()
 
-        # 2. Initialize Components
-        self.memory = MemoryInterface()
+        # 2. Initialize Core Services (Dependency Injection Root)
+        self.embedder = EmbeddingModel()
+        self.vector_store = VectorStore()
+        self.memory_storage = MemoryStorage(embedding_model=self.embedder, vector_store=self.vector_store)
+
+        # Initialize MemoryInterface with shared components to avoid split-brain
+        self.memory = MemoryInterface(
+            memory_storage=self.memory_storage,
+            embedding_model=self.embedder,
+            vector_store=self.vector_store
+        )
+
+        # 3. Initialize Components with injected dependencies
+        self.plan_builder = PlanBuilder(memory_storage=self.memory_storage)
+        self.context_adapter = ContextAdapter(memory_storage=self.memory_storage)
+        self.reflector = ReflectionInterpreter(memory_storage=self.memory_storage)
+        self.learner = LearningManager(memory_storage=self.memory_storage)
+        self.confidence = ConfidenceManager(memory_storage=self.memory_storage)
+
+        # Tools that don't need memory injection or self-initiate harmlessly
         self.intent_analyzer = IntentAnalyzer()
-        self.reflector = ReflectionInterpreter()
-        self.confidence = ConfidenceManager()
         self.validator = SelfValidator()
-        self.learner = LearningManager()
-        self.plan_builder = PlanBuilder()
-        self.context_adapter = ContextAdapter()
 
         # 4. Initialize Control & Execution
-        self.router = Router(self.dispatcher)
+        # Inject shared MemoryInterface into Router
+        self.router = Router(dispatcher=self.dispatcher, memory_interface=self.memory)
+
         self.plan_executor = PlanExecutor(self.plan_builder, self.dispatcher, self.router)
         self.goal_manager = GoalManager(self.memory, self.plan_builder, self.dispatcher, self.router)
 
         # 3. Register Tools
+        # We need to make sure 'memory' tool uses our instance, not a new one.
         components = {
             "intent_analyzer": self.intent_analyzer,
             "memory": self.memory,
@@ -55,6 +76,9 @@ class CoreLoop:
             self.learner, self.confidence, self.plan_builder, interval_seconds=10, test_mode=True
         )
         self.running = False
+
+        # Hydrate active plans
+        self.plan_builder.load_active_plans()
 
     def run_once(self, text: str):
         """
@@ -106,7 +130,7 @@ class CoreLoop:
             print(f"[PLANNER] Created single-step execution plan: {plan.id}")
 
         # --- Step 3: Execute via Dispatcher (PlanExecutor uses Dispatcher/Router) ---
-        # Note: PlanExecutor calls router.route(step_description) internally if no plan exists?
+        # Note: PlanExecutor calls router.route(step.description) internally if no plan exists?
         # No, PlanExecutor executes steps. If step description is just the input text,
         # PlanExecutor's _execute_step calls `router.route(step.description)`.
         # So the Router is called AGAIN inside PlanExecutor.

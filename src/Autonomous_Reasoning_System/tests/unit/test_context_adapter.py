@@ -3,7 +3,6 @@ from unittest.mock import MagicMock, patch
 from Autonomous_Reasoning_System.llm.context_adapter import ContextAdapter
 
 @patch("Autonomous_Reasoning_System.llm.context_adapter.call_llm")
-@patch("Autonomous_Reasoning_System.llm.context_adapter.get_memory_storage")
 @patch("Autonomous_Reasoning_System.llm.context_adapter.RetrievalOrchestrator")
 @patch("Autonomous_Reasoning_System.llm.context_adapter.ReasoningConsolidator")
 @patch("Autonomous_Reasoning_System.llm.context_adapter.ContextBuilder")
@@ -11,7 +10,6 @@ def test_context_adapter_run(
     mock_ContextBuilder,
     mock_ReasoningConsolidator,
     mock_RetrievalOrchestrator,
-    mock_get_memory_storage,
     mock_call_llm
 ):
     # Setup mocks
@@ -20,11 +18,10 @@ def test_context_adapter_run(
     mock_retriever.retrieve.return_value = ["Fact 1", "Fact 2"]
 
     mock_memory = MagicMock()
-    mock_get_memory_storage.return_value = mock_memory
 
     mock_call_llm.return_value = "This is a mock response from Ollama."
 
-    adapter = ContextAdapter()
+    adapter = ContextAdapter(memory_storage=mock_memory)
     response = adapter.run("Hello world")
 
     assert response == "This is a mock response from Ollama."

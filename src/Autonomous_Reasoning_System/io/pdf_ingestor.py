@@ -1,6 +1,6 @@
 from pathlib import Path
 from pypdf import PdfReader
-from Autonomous_Reasoning_System.memory.singletons import get_memory_storage
+from Autonomous_Reasoning_System.memory.storage import MemoryStorage
 from Autonomous_Reasoning_System.memory.llm_summarizer import summarize_with_local_llm
 import textwrap
 
@@ -11,7 +11,8 @@ class PDFIngestor:
     Optionally creates an overall summary.
     """
     def __init__(self):
-        self.memory = get_memory_storage()
+        # In standalone script usage, we might need to instantiate new Storage
+        self.memory = MemoryStorage()
 
     def ingest(self, file_path: str, chunk_size: int = 1000, summarize: bool = True):
         path = Path(file_path)

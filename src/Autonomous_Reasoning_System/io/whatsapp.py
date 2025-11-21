@@ -4,13 +4,14 @@ import threading
 import time
 from collections import deque
 from Autonomous_Reasoning_System.control.core_loop import CoreLoop
+from Autonomous_Reasoning_System.infrastructure import config
 from playwright.sync_api import sync_playwright
 
 
-USER_DATA_DIR = r"C:\Users\GeorgeC\AppData\Local\Google\Chrome\User Data\Profile 2"
-SELF_CHAT_URL = "https://web.whatsapp.com/send/?phone=27796995695"
-POLL_INTERVAL = 2  # seconds
-SELF_NAME = "GeorgeC"
+USER_DATA_DIR = config.WA_USER_DATA_DIR
+SELF_CHAT_URL = config.WA_SELF_CHAT_URL
+POLL_INTERVAL = config.WA_POLL_INTERVAL
+SELF_NAME = config.WA_SELF_NAME
 
 SELF_PREFIXES = ("noted", "task noted", "sorry", "⚠️", "error", "ok", "done")
 SENT_CACHE = deque(maxlen=10)

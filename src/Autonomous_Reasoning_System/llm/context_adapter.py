@@ -1,5 +1,4 @@
 from ..memory.context_builder import ContextBuilder
-from ..memory.singletons import get_memory_storage
 from ..memory.retrieval_orchestrator import RetrievalOrchestrator
 from .engine import call_llm
 from .consolidator import ReasoningConsolidator
@@ -15,9 +14,12 @@ class ContextAdapter:
 
     CONSOLIDATION_INTERVAL = 5  # summarize every N turns
 
-    def __init__(self):
+    def __init__(self, memory_storage=None):
         self.builder = ContextBuilder()
-        self.memory = get_memory_storage()
+        self.memory = memory_storage
+        if not self.memory:
+             print("[WARN] ContextAdapter initialized without memory_storage.")
+
         self.retriever = RetrievalOrchestrator()
         self.consolidator = ReasoningConsolidator()
         self.turn_counter = 0
@@ -57,10 +59,11 @@ Answer:
 
         reply = call_llm(system_prompt=system_prompt, user_prompt=user_prompt)
 
-        self.memory.add_memory(
-            text=f"User: {user_input}\nTyrone: {reply}",
-            memory_type="episode",
-            importance=0.7
-        )
+        if self.memory:
+            self.memory.add_memory(
+                text=f"User: {user_input}\nTyrone: {reply}",
+                memory_type="episode",
+                importance=0.7
+            )
 
         return reply

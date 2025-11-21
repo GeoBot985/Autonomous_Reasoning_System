@@ -829,9 +829,7 @@ class CoreLoop:
 
         # But first, let's fix the GoalManager injection which is the main task.
 
-        # Fix Router init call for now to match definition I saw
-        self.router = Router(dispatcher=self.dispatcher)
-        # If Router needs memory, I should add it to Router class. But sticking to file state.
+        self.router = Router(dispatcher=self.dispatcher, memory_interface=self.memory)
 
         self.plan_executor = PlanExecutor(self.plan_builder, self.dispatcher, self.router)
 
@@ -940,12 +938,7 @@ class CoreLoop:
 
         # --- Step 4: Return output ---
         # (We prepare it here, returns at end)
-        # print(f"Tyrone: {final_output}") # Using print for UI response as per original design, kept for user visibility in CLI
-        # Ideally, this should be handled by the caller (main.py), but CoreLoop prints it directly.
-        # The user request was to replace tons of print logs. The final output is arguably UI.
-        # I will keep it as print if it's the main response, but maybe log it too.
         logger.info(f"Tyrone response: {final_output}")
-        print(f"Tyrone: {final_output}")
 
         # --- Step 5: Update Memory (Episodic + Semantic) ---
         # The tools likely updated specific memories.
@@ -982,14 +975,14 @@ class CoreLoop:
         result = {
             "summary": final_output,
             "decision": route_decision,
-            "plan_id": plan.id,
+            "plan_id": plan.id if plan else "override",
             "duration": duration,
             "reflection": reflection_data,
             # Legacy keys for tests
             "reflection_data": reflection_data
         }
 
-        self._broadcast_thought(plan.id, f"Plan status: {status}. Output: {final_output}")
+        self._broadcast_thought(plan.id if plan else "override", f"Plan status: {status}. Output: {final_output}")
         self.last_response = final_output
         self._send_to_user(final_output)
         return result
@@ -1588,8 +1581,9 @@ class Router:
     Router determines the sequence of tools (pipeline) to execute based on user input.
     Now organized by Intent Families.
     """
-    def __init__(self, dispatcher: Dispatcher):
+    def __init__(self, dispatcher: Dispatcher, memory_interface=None):
         self.dispatcher = dispatcher
+        self.memory = memory_interface
 
         # 1. Map Intents to Families
         self.intent_family_map = {

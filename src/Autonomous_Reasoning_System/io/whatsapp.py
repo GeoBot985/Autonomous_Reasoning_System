@@ -213,19 +213,13 @@ def main():
         )
         input_thread.start()
 
-        ready_for_messages = False
+        ready_for_messages = True
 
         try:
            while True:
                 current_message = read_last_message_text(page)
 
                 if current_message and current_message != last_seen_text:
-                    if not ready_for_messages:
-                        print(f"[DEBUG] Ignoring pre-launch message: {current_message}")
-                        ready_for_messages = True
-                        last_seen_text = current_message
-                        continue
-
                     print(f"[DEBUG] New message detected: {current_message}")
 
                     # ✅ Ignore if it's part of the last outgoing message (multi-line echo protection)

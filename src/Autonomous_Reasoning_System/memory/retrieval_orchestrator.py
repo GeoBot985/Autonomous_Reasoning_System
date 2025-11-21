@@ -1,147 +1,112 @@
 
 import re
 import numpy as np
+import concurrent.futures
 from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
+from Autonomous_Reasoning_System.tools.entity_extractor import EntityExtractor
 
 
 class RetrievalOrchestrator:
     """
     Unified retrieval orchestrator:
-    - deterministic → source/memory_type matching
+    - deterministic → source/memory_type matching using extracted entities
     - semantic → vector similarity
-    - hybrid → combines both
-    - entity-aware → resolves named entities like "Cornelia" to the most relevant memory
+    - parallel execution with prioritization
     """
 
     def __init__(self, memory_storage=None, embedding_model=None):
         self.memory = memory_storage
-        self.embedder = embedding_model or EmbeddingModel()  # reuse the same embedding model
-
-    # ---------------------------------------------------
-    def detect_intent(self, query: str) -> str:
-        q = query.lower()
-        if re.search(r"\b(show|open|read|list|display|report|document|file)\b", q):
-            return "deterministic"
-        if re.search(r"\b(summarize|combine|compare|mention)\b", q):
-            return "hybrid"
-        return "semantic"
+        self.embedder = embedding_model or EmbeddingModel()
+        self.entity_extractor = EntityExtractor()
 
     # ---------------------------------------------------
     def retrieve(self, query: str):
         if not self.memory:
             return []
 
-        mode = self.detect_intent(query)
-        print(f"🧭 Retrieval mode → {mode}")
+        print(f"🧭 Starting Parallel Hybrid Retrieval for: '{query}'")
 
-        # 🧠 Entity disambiguation always runs first (adds context to any mode)
-        entity_result = self._entity_resolution(query)
-        if entity_result:
-            print(f"[🧩 EntityResolution] Boosting '{entity_result[:40]}...'")
-            # Return this prioritized entity first, followed by mode results
-            base = self._mode_retrieve(query, mode)
-            return [entity_result] + [r for r in base if r != entity_result]
+        # 1. Extract Entities (Blocking call, fast)
+        keywords = self.entity_extractor.extract(query)
+        print(f"🔑 Extracted keywords: {keywords}")
 
-        # fallback: normal mode
-        return self._mode_retrieve(query, mode)
+        # 2. Parallel Execution of Deterministic and Semantic Search
+        det_results = []
+        sem_results = []
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future_det = executor.submit(self._search_deterministic, keywords)
+            future_sem = executor.submit(self._search_semantic, query)
+
+            det_results = future_det.result()
+            sem_results = future_sem.result()
+
+        # 3. Prioritization Logic
+        # det_results is a list of tuples: (text, score)
+
+        # Check for high-confidence deterministic match
+        if det_results:
+            best_det = det_results[0]
+            # If score >= 0.9 (which we set to 1.0 in storage.py), prioritize it
+            if best_det[1] >= 0.9:
+                print(f"✅ High-confidence deterministic match found: '{best_det[0][:50]}...'")
+                # Return just the text of the matches
+                return [r[0] for r in det_results]
+
+        print("⚠️ No high-confidence deterministic match. Falling back to hybrid ranking.")
+
+        # 4. Fallback: Combine and Rank
+        # Flatten lists
+        combined_texts = set()
+        final_results = []
+
+        # Add deterministic results (lower priority than exclusive but still relevant)
+        for text, score in det_results:
+            if text not in combined_texts:
+                combined_texts.add(text)
+                final_results.append(text)
+
+        # Add semantic results
+        for text in sem_results:
+            if text not in combined_texts:
+                combined_texts.add(text)
+                final_results.append(text)
+
+        # Return top 5 unique results
+        return final_results[:5]
 
     # ---------------------------------------------------
-    def _mode_retrieve(self, query: str, mode: str):
-        if mode == "deterministic":
-            return self._deterministic_retrieve(query)
-        elif mode == "hybrid":
-            return self._hybrid_retrieve(query)
-        else:
-            return self._semantic_retrieve(query)
+    def _search_deterministic(self, keywords: list[str]):
+        """Executes the high-integrity lookup."""
+        if not keywords:
+            return []
+        try:
+            # Call the updated search_text in storage.py
+            # storage.search_text returns [(text, score), ...]
+            results = self.memory.search_text(keywords, top_k=3)
+            print(f"🔍 Deterministic search found {len(results)} matches.")
+            return results
+        except Exception as e:
+            print(f"[ERROR] Deterministic search failed: {e}")
+            return []
 
     # ---------------------------------------------------
-    def _deterministic_retrieve(self, query: str):
-        df = self.memory.get_all_memories()
-        q = query.lower()
-
-        direct = df[df["source"].str.lower().str.contains("visionassist", na=False)]
-        if not direct.empty:
-            print(f"✅ Found {len(direct)} memories by source match.")
-            return direct.sort_values("created_at")
-
-        if "summary" in q:
-            filtered = df[df["memory_type"].str.lower().eq("document_summary")]
-            if not filtered.empty:
-                print(f"✅ Found {len(filtered)} document summaries.")
-                return filtered.sort_values("created_at")
-
-        print("⚠️ No direct deterministic matches, falling back to semantic search.")
-        return self._semantic_retrieve(query)
-
-    # ---------------------------------------------------
-    def _semantic_retrieve(self, query: str, k: int = 5):
-        """Vector-based semantic retrieval with fallback to re-embedding."""
+    def _search_semantic(self, query: str, k: int = 5):
+        """Vector-based semantic retrieval."""
         try:
             q_vec = self.embedder.embed(query)
 
             # Try retrieving from DuckDB VSS if available
-            if hasattr(self.memory, "vector_store"):
-                print("🧠 Using DuckDB VSS for semantic retrieval...")
+            if hasattr(self.memory, "vector_store") and self.memory.vector_store:
                 results = self.memory.vector_store.search(np.array(q_vec), k)
                 texts = [r.get("text") for r in results if r.get("text")]
-                print(f"✅ Retrieved {len(texts)} semantic results.")
+                print(f"🧠 Semantic search found {len(texts)} matches.")
                 return texts
 
-            # --- fallback path if VSS not available ---
-            print("⚠️ VSS missing, rebuilding temporary vector set...")
-            mems = self.memory.get_all_memories()
-            texts = mems["text"].tolist()
-            vecs = np.array([self.embedder.embed(t) for t in texts])
-            sims = np.dot(vecs, q_vec) / (np.linalg.norm(vecs, axis=1) * np.linalg.norm(q_vec))
-            top_idx = np.argsort(sims)[-k:][::-1]
-            results = [texts[i] for i in top_idx]
-            print(f"✅ Retrieved {len(results)} semantic results (fallback).")
-            return results
+            # Fallback if no vector store (shouldn't happen in prod config)
+            print("⚠️ Semantic search skipped (no vector store).")
+            return []
 
         except Exception as e:
             print(f"[ERROR] Semantic search failed: {e}")
             return []
-
-    # ---------------------------------------------------
-    def _hybrid_retrieve(self, query: str):
-        df = self.memory.get_all_memories()
-        subset = df[df["text"].str.contains(query.split()[0], case=False, na=False)]
-        sem = self._semantic_retrieve(query)
-        print(f"Hybrid: subset={len(subset)}, semantic={len(sem)}")
-        return {"subset": subset, "semantic": sem}
-
-    # ---------------------------------------------------
-    def _entity_resolution(self, query: str):
-        """Detects if a named entity (like 'Cornelia') exists and returns the best memory."""
-        df = self.memory.get_all_memories()
-        if df.empty:
-            return None
-
-        # detect capitalized name
-        name_match = re.search(r"\b[A-Z][a-z]{2,}\b", query)
-        if not name_match:
-            return None
-
-        name = name_match.group(0)
-        subset = df[df["text"].str.contains(name, case=False, na=False)]
-        if subset.empty:
-            return None
-
-        # Score each mention
-        def score_row(row):
-            t = str(row["text"]).lower()
-            score = 0.0
-            if name.lower() in t:
-                score += 0.4
-            if any(w in t for w in ["my ", "our ", "wife", "husband", "daughter", "son"]):
-                score += 0.3
-            overlap = len(set(query.lower().split()) & set(t.split()))
-            score += min(0.3, overlap / 50.0)
-            return score
-
-        # Use apply but check if 'score' column exists or copy slice to avoid warning
-        subset = subset.copy()
-        subset["score"] = subset.apply(score_row, axis=1)
-        best = subset.sort_values("score", ascending=False).iloc[0]
-        print(f"[🧩 EntityResolution] '{name}' → best match score={best['score']:.3f}")
-        return name

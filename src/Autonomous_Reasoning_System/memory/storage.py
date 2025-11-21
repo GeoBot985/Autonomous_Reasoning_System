@@ -190,17 +190,39 @@ class MemoryStorage:
             """, (escaped_query,)).df()
 
     # ------------------------------------------------------------------
-    def search_text(self, query: str, top_k: int = 3):
-        """Keyword-based search fallback."""
+    def search_text(self, query: str | list[str], top_k: int = 3):
+        """
+        Keyword-based search fallback.
+        Accepts a string (single LIKE) or a list of strings (AND LIKE for each).
+        """
         try:
-            escaped_query = f"%{query}%"
-            with self._lock:
-                res = self.con.execute("""
-                    SELECT text FROM memory
-                    WHERE text ILIKE ?
-                    LIMIT ?
-                """, (escaped_query, top_k)).fetchall()
+            if isinstance(query, str):
+                keywords = [query]
+            else:
+                keywords = query
 
+            if not keywords:
+                return []
+
+            # Construct dynamic query
+            # We want: WHERE text ILIKE ? AND text ILIKE ? ...
+            conditions = ["text ILIKE ?"] * len(keywords)
+            where_clause = " AND ".join(conditions)
+
+            # Prepare params with wildcards
+            params = [f"%{k}%" for k in keywords]
+            params.append(top_k)  # Add limit param at the end
+
+            sql = f"""
+                SELECT text FROM memory
+                WHERE {where_clause}
+                LIMIT ?
+            """
+
+            with self._lock:
+                res = self.con.execute(sql, tuple(params)).fetchall()
+
+            # Deterministic results get high confidence score
             results = [(r[0], 1.0) for r in res]
             return results
         except Exception as e:

@@ -48,9 +48,9 @@ class CoreLoop:
 
         # 3. Initialize Components with injected dependencies
         self.plan_builder = PlanBuilder(memory_storage=self.memory_storage)
-        self.context_adapter = ContextAdapter(memory_storage=self.memory_storage)
+        self.context_adapter = ContextAdapter(memory_storage=self.memory_storage, embedding_model=self.embedder)
 
-        self.reflector = ReflectionInterpreter(memory_storage=self.memory_storage)
+        self.reflector = ReflectionInterpreter(memory_storage=self.memory_storage, embedding_model=self.embedder)
         self.learner = LearningManager(memory_storage=self.memory_storage)
         self.confidence = ConfidenceManager(memory_storage=self.memory_storage)
 

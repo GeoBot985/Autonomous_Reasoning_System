@@ -18,13 +18,13 @@ class ContextAdapter:
 
     CONSOLIDATION_INTERVAL = 5  # summarize every N turns
 
-    def __init__(self, memory_storage=None):
+    def __init__(self, memory_storage=None, embedding_model=None):
         self.builder = ContextBuilder()
         self.memory = memory_storage
         if not self.memory:
              logger.warning("[WARN] ContextAdapter initialized without memory_storage.")
 
-        self.retriever = RetrievalOrchestrator()
+        self.retriever = RetrievalOrchestrator(memory_storage=self.memory, embedding_model=embedding_model)
         self.consolidator = ReasoningConsolidator()
         self.turn_counter = 0
         self.history = [] # Short-term conversation history

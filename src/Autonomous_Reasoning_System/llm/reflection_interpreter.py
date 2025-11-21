@@ -11,15 +11,9 @@ class ReflectionInterpreter:
     The model is instructed that retrieved memories override all other world knowledge.
     """
 
-    def __init__(self, memory_storage=None):
+    def __init__(self, memory_storage=None, embedding_model=None):
         self.memory = memory_storage
-        # Note: RetrievalOrchestrator might need memory injected too, or it pulls from singletons/Interface
-        # If RetrievalOrchestrator is not refactored yet, it will fail.
-        # We should instantiate it with memory if possible or assume it is refactored.
-        # The previous code imported get_memory_storage.
-        # We will try to pass memory if we can, but RetrievalOrchestrator init isn't visible yet.
-        # Assuming we fix RetrievalOrchestrator next.
-        self.retriever = RetrievalOrchestrator(memory_storage=memory_storage)
+        self.retriever = RetrievalOrchestrator(memory_storage=memory_storage, embedding_model=embedding_model)
 
     # ----------------------------------------------------------------------
     def interpret(self, user_input: str, raw: bool = False) -> dict:

@@ -516,6 +516,18 @@ class Router:
         if "birthday" in q or ("cornelia" in q and any(word in q for word in ["is", "="])) or "remember" in q.lower():
             return {"intent": "store_fact", "family": "memory", "pipeline": ["memory"], "reason": "Direct fact storage"}
 
+        # GREETING/STATUS FAST-PATH OVERRIDE
+        if lower.strip() in [
+            "hi", "hello", "hey", "tyrone", "hi tyrone", "hello tyrone",
+            "are you awake?", "are you there", "are you busy", "good morning", "good evening"
+        ] or lower.strip().endswith("?"):
+            return {
+                "intent": "greet",
+                "pipeline": ["context_adapter"],
+                "reason": "Direct user greeting/status check detected - minimal processing.",
+                "response_override": "I'm here and ready to assist you! How can I help?"
+            }
+
         # === 2. Semantic routing with bulletproof JSON parsing ===
         # Use retrieve() instead of search_similar (new API)
         recall = self.memory.retrieve(text)[:1] if self.memory else []

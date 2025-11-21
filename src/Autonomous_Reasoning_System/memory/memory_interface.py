@@ -5,6 +5,8 @@ from Autonomous_Reasoning_System.memory.persistence import get_persistence_servi
 from Autonomous_Reasoning_System.memory.storage import MemoryStorage
 from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
 from Autonomous_Reasoning_System.memory.vector_store import VectorStore
+from Autonomous_Reasoning_System.infrastructure.concurrency import memory_write_lock
+from Autonomous_Reasoning_System.infrastructure.observability import Metrics
 import numpy as np
 from datetime import datetime
 
@@ -102,26 +104,27 @@ class MemoryInterface:
         """
         Persist all memory states to disk.
         """
-        print("💾 Saving memory state...")
-        # DuckDB is auto-persisted, but we might want to checkpoint or similar?
-        # No, DuckDB persistent file is always saved.
-        # But we might still need to save VectorStore (FAISS) and EpisodicMemory (if not in DB).
+        with memory_write_lock:
+            print("💾 Saving memory state...")
+            # DuckDB is auto-persisted, but we might want to checkpoint or similar?
+            # No, DuckDB persistent file is always saved.
+            # But we might still need to save VectorStore (FAISS) and EpisodicMemory (if not in DB).
 
-        # We might not need to save deterministic memory anymore if it's in DuckDB directly.
-        # But persistence.save_deterministic_memory writes parquet.
-        # If we want to keep parquet as backup or if other tools read it, we can keep it.
-        # But the instruction "Delete the logic that reads the parquet file" implies we are moving away.
-        # However, for safety, let's keep saving other components.
+            # We might not need to save deterministic memory anymore if it's in DuckDB directly.
+            # But persistence.save_deterministic_memory writes parquet.
+            # If we want to keep parquet as backup or if other tools read it, we can keep it.
+            # But the instruction "Delete the logic that reads the parquet file" implies we are moving away.
+            # However, for safety, let's keep saving other components.
 
-        # self.persistence.save_deterministic_memory(self.storage.get_all_memories()) # Maybe redundant now
+            # self.persistence.save_deterministic_memory(self.storage.get_all_memories()) # Maybe redundant now
 
-        # Goals are also in DB now.
-        # self.persistence.save_goals(self.storage.get_all_goals())
+            # Goals are also in DB now.
+            # self.persistence.save_goals(self.storage.get_all_goals())
 
-        self.persistence.save_episodic_memory(self.episodes.get_all_episodes())
-        self.persistence.save_vector_index(self.vector_store.index)
-        self.persistence.save_vector_metadata(self.vector_store.metadata)
-        print("✅ Memory saved.")
+            self.persistence.save_episodic_memory(self.episodes.get_all_episodes())
+            self.persistence.save_vector_index(self.vector_store.index)
+            self.persistence.save_vector_metadata(self.vector_store.metadata)
+            print("✅ Memory saved.")
 
     # ------------------------------------------------------------------
     def remember(self, text: str, metadata: dict = None):
@@ -129,6 +132,7 @@ class MemoryInterface:
         Add a memory to the system (Unified replacement for store).
         Automatically triggers a save.
         """
+        Metrics().increment("memory_ops_write")
         metadata = metadata or {}
         memory_type = metadata.get("type", "note")
         importance = metadata.get("importance", 0.5)
@@ -151,6 +155,7 @@ class MemoryInterface:
         Retrieve top-k semantically similar memories (Unified replacement for recall).
         Combines vector search and keyword fallback if needed.
         """
+        Metrics().increment("memory_ops_read")
         try:
             # 1. Vector Search
             if hasattr(self, "vector_store") and self.vector_store:

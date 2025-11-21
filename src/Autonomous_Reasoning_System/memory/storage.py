@@ -7,6 +7,7 @@ import os
 import threading
 import logging
 from Autonomous_Reasoning_System.infrastructure import config
+from Autonomous_Reasoning_System.infrastructure.concurrency import memory_write_lock
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,8 @@ class MemoryStorage:
 
         # Initialize persistent connection
         self.con = duckdb.connect(self.db_path)
-        self._write_lock = threading.Lock()
+        # Use the global shared lock
+        self._write_lock = memory_write_lock
         # Backwards compatibility for existing lock usage
         self._lock = self._write_lock
 

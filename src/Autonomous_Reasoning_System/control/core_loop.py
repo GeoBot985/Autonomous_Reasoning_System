@@ -118,6 +118,10 @@ class CoreLoop:
         logger.info(f"[CORE LOOP] Received input: {text}")
         start_time = time.time()
 
+        # Add metrics
+        from Autonomous_Reasoning_System.infrastructure.observability import Metrics
+        Metrics().increment("core_loop_cycles")
+
         # --- Step 0: Check Goals (Periodic/Background) ---
         # We do this at the start of an interaction to simulate "thinking about long-term goals"
         # In a real agent, this would happen on a clock or when idle.
@@ -220,12 +224,16 @@ class CoreLoop:
                 self.confidence.reinforce()
 
         duration = time.time() - start_time
+        Metrics().record_time("core_loop_duration", duration)
+
         return {
             "summary": final_output,
             "decision": route_decision,
             "plan_id": plan.id,
             "duration": duration,
-            "reflection": reflection_data
+            "reflection": reflection_data,
+            # Legacy keys for tests
+            "reflection_data": reflection_data
         }
 
     def initialize_context(self):

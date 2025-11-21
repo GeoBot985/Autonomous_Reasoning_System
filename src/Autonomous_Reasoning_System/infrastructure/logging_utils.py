@@ -1,18 +1,42 @@
 import logging
 import sys
 import os
+import json
 from Autonomous_Reasoning_System.infrastructure import config
+
+class StructuredFormatter(logging.Formatter):
+    def format(self, record):
+        # Basic structured format
+        log_record = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "module": record.module,
+            "line": record.lineno
+        }
+        # Add exception info if present
+        if record.exc_info:
+            log_record["exception"] = self.formatException(record.exc_info)
+
+        return json.dumps(log_record)
 
 def setup_logging(default_level=logging.INFO):
     """
     Configures the root logger with a consistent format and handlers.
     """
+    # Check if we want JSON logging via env var, default to standard for readability unless specified
+    json_logging = os.getenv("JSON_LOGGING", "false").lower() == "true"
+
     # Define the log format
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     date_format = "%Y-%m-%d %H:%M:%S"
 
     # Create a formatter
-    formatter = logging.Formatter(log_format, date_format)
+    if json_logging:
+        formatter = StructuredFormatter(datefmt=date_format)
+    else:
+        formatter = logging.Formatter(log_format, date_format)
 
     # Configure the root logger
     root_logger = logging.getLogger()

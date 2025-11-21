@@ -8,6 +8,7 @@ import threading
 
 from datetime import datetime, timedelta
 from collections import defaultdict
+from Autonomous_Reasoning_System.infrastructure.concurrency import memory_write_lock
 # from ..memory.singletons import get_memory_storage # Deleted
 
 
@@ -16,7 +17,7 @@ class LearningManager:
         self.memory = memory_storage
         self.experience_buffer = []   # incoming validation results
         self.last_summary_time = datetime.utcnow()
-        self.lock = threading.Lock()
+        self.lock = memory_write_lock # Use shared lock
 
     # ---------------------------------------------------------------
     # 🧠 INGESTION
@@ -44,7 +45,7 @@ class LearningManager:
         Returns a dict with trend summary and inserts a short "lesson" memory.
         Thread-safe to prevent DuckDB write conflicts when called by multiple threads.
         """
-        with self.lock:  # 🔒 Prevent concurrent writes and reads of buffer
+        with self.lock:  # 🔒 Prevent concurrent writes and reads of buffer (and memory writes via shared lock)
             now = datetime.utcnow()
             cutoff = now - timedelta(minutes=window_minutes)
             recent = [x for x in self.experience_buffer if self._ts(x["timestamp"]) >= cutoff]

@@ -3,6 +3,7 @@ import time
 import logging
 import traceback
 from typing import Any, Dict, Callable, List, Optional, Union
+from Autonomous_Reasoning_System.infrastructure.observability import Metrics
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +179,10 @@ class Dispatcher:
 
     def _finalize_response(self, tool_name: str, status: str, output: Any, errors: List[str], warnings: List[str], context: Dict[str, Any], arguments: Dict[str, Any], start_time: float) -> Dict[str, Any]:
         duration = time.time() - start_time
+
+        # Metrics
+        Metrics().record_time("tool_exec_time", duration)
+        Metrics().increment(f"tool_exec_{status}")
 
         meta = {
             "tool_name": tool_name,

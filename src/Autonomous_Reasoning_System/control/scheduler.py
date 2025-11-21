@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 import duckdb
 
+from Autonomous_Reasoning_System.infrastructure.observability import Metrics
 # from Autonomous_Reasoning_System.tools.action_executor import ActionExecutor # Removed dumb executor
 from Autonomous_Reasoning_System.control.attention_manager import attention  # 🧭 added
 
@@ -76,6 +77,7 @@ def start_heartbeat_with_plans(learner, confidence, plan_builder, interval_secon
         counter = 0
         while True:
             try:
+                start_tick = time.time()
                 # 🧭 Attention Check — skip background work if user is active or recently interacted
                 if attention.should_pause_autonomous():
                     # optional: only print occasionally to avoid clutter
@@ -84,6 +86,7 @@ def start_heartbeat_with_plans(learner, confidence, plan_builder, interval_secon
                     continue
 
                 with lock:  # prevent overlap
+                    Metrics().increment("scheduler_heartbeat")
                     # --- learning summary ---
                     summary = learner.summarise_recent(window_minutes=2)
                     ts = datetime.now().strftime("%H:%M:%S")
@@ -148,8 +151,12 @@ def start_heartbeat_with_plans(learner, confidence, plan_builder, interval_secon
                         else:
                             logger.info("[📋 ACTIVE PLANS] None currently active.")
 
+                # Record timing
+                Metrics().record_time("scheduler_tick_duration", time.time() - start_tick)
+
             except Exception as e:
                 logger.error(f"[⚠️ HEARTBEAT ERROR] {e}")
+                Metrics().increment("scheduler_errors")
 
             time.sleep(interval_seconds)
 

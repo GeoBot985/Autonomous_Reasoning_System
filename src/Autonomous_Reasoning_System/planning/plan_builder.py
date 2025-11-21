@@ -16,6 +16,7 @@ from uuid import uuid4
 from typing import List, Optional, Dict, Any
 import json
 from .workspace import Workspace
+from Autonomous_Reasoning_System.infrastructure.concurrency import memory_write_lock
 
 logger = logging.getLogger(__name__)
 
@@ -165,14 +166,15 @@ class PlanBuilder:
     def _init_plans_table(self):
         """Create plans table if it doesn't exist."""
         try:
-            self.memory.con.execute("""
-                CREATE TABLE IF NOT EXISTS plans (
-                    id VARCHAR PRIMARY KEY,
-                    data JSON,
-                    status VARCHAR,
-                    updated_at TIMESTAMP
-                )
-            """)
+            with memory_write_lock:
+                self.memory.con.execute("""
+                    CREATE TABLE IF NOT EXISTS plans (
+                        id VARCHAR PRIMARY KEY,
+                        data JSON,
+                        status VARCHAR,
+                        updated_at TIMESTAMP
+                    )
+                """)
         except Exception as e:
             logger.error(f"[PlanBuilder] Error initializing plans table: {e}")
 
@@ -183,7 +185,11 @@ class PlanBuilder:
 
         try:
             # Fetch plans that are not complete
-            res = self.memory.con.execute("SELECT data FROM plans WHERE status != 'complete'").fetchall()
+            # Use lock for reading as well since we are sharing connection?
+            # DuckDB read might be safe but to be consistent with the lock usage:
+            with memory_write_lock:
+                res = self.memory.con.execute("SELECT data FROM plans WHERE status != 'complete'").fetchall()
+
             count = 0
             for row in res:
                 try:
@@ -224,9 +230,10 @@ class PlanBuilder:
             # so we do check-then-insert/update or DELETE-INSERT.
             # DELETE-INSERT is safest for simple KV store behavior.
 
-            self.memory.con.execute("DELETE FROM plans WHERE id=?", (plan.id,))
-            self.memory.con.execute("INSERT INTO plans VALUES (?, ?, ?, ?)",
-                                    (plan.id, data_json, plan.status, now_str))
+            with memory_write_lock:
+                self.memory.con.execute("DELETE FROM plans WHERE id=?", (plan.id,))
+                self.memory.con.execute("INSERT INTO plans VALUES (?, ?, ?, ?)",
+                                        (plan.id, data_json, plan.status, now_str))
         except Exception as e:
             logger.error(f"[PlanBuilder] Error persisting plan {plan.id}: {e}")
 

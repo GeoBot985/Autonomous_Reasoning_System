@@ -5,6 +5,8 @@ from Autonomous_Reasoning_System.memory.persistence import get_persistence_servi
 from Autonomous_Reasoning_System.memory.storage import MemoryStorage
 from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
 from Autonomous_Reasoning_System.memory.vector_store import DuckVSSVectorStore
+from Autonomous_Reasoning_System.memory.events import MemoryCreatedEvent
+from Autonomous_Reasoning_System.memory.kg_builder import KGBuilder
 from Autonomous_Reasoning_System.infrastructure.concurrency import memory_write_lock
 from Autonomous_Reasoning_System.infrastructure.observability import Metrics
 import numpy as np
@@ -38,8 +40,24 @@ class MemoryInterface:
         ep_df = self.persistence.load_episodic_memory()
         self.episodes = EpisodicMemory(initial_df=ep_df)
 
+        self.listeners = []
+
+        # Initialize KG Builder and subscribe it
+        self.kg_builder = KGBuilder(self.storage)
+        self.subscribe(self.kg_builder.handle_event)
 
         print("✅ Memory Interface fully hydrated.")
+
+    def subscribe(self, callback):
+        """Subscribe to memory events."""
+        self.listeners.append(callback)
+
+    def _emit_memory_created(self, event: MemoryCreatedEvent):
+        for listener in self.listeners:
+            try:
+                listener(event)
+            except Exception as e:
+                print(f"Error in memory event listener: {e}")
 
     def _rebuild_vector_index(self):
         """No-op: VSS lives inside DuckDB and stays consistent."""
@@ -70,6 +88,16 @@ class MemoryInterface:
         uid = self.storage.add_memory(text, memory_type, importance, source)
         if self.episodes.active_episode_id:
             print(f"🧠 Added memory linked to active episode {self.episodes.active_episode_id}")
+
+        # Emit event
+        event = MemoryCreatedEvent(
+            text=text,
+            timestamp=datetime.utcnow().isoformat(),
+            source=source,
+            memory_id=uid,
+            metadata=metadata
+        )
+        self._emit_memory_created(event)
 
         self.save()
         return uid
@@ -253,3 +281,113 @@ class MemoryInterface:
         self.save()
         print("🧾 Episode summarized.")
         return summary
+
+    # ------------------------------------------------------------------
+    # KG Query Interface
+    # ------------------------------------------------------------------
+    def get_kg_neighbors(self, entity_id: str, hops: int = 1):
+        """Fetch neighbors for an entity."""
+        if not entity_id: return []
+        query = f"%{entity_id}%"
+        with self.storage._lock:
+             return self.storage.con.execute("""
+                SELECT * FROM triples
+                WHERE subject ILIKE ? OR object ILIKE ?
+             """, (query, query)).fetchall()
+
+    def get_kg_relations(self, entity_id: str):
+        """Get all relations for an entity."""
+        if not entity_id: return []
+        query = f"%{entity_id}%"
+        with self.storage._lock:
+             return self.storage.con.execute("""
+                SELECT DISTINCT relation FROM triples
+                WHERE subject ILIKE ? OR object ILIKE ?
+             """, (query, query)).df()['relation'].tolist()
+
+    def delete_kg_triple(self, subject, relation, object_):
+        """Delete a triple."""
+        with self.storage._write_lock:
+             self.storage.con.execute("""
+                DELETE FROM triples WHERE subject=? AND relation=? AND object=?
+             """, (subject, relation, object_))
+             self.storage.con.commit()
+
+    def search_entities_by_name(self, name: str):
+        """Search for entities by name."""
+        if not name: return []
+        query = f"%{name}%"
+        with self.storage._lock:
+             return self.storage.con.execute("""
+                SELECT entity_id, type FROM entities
+                WHERE entity_id ILIKE ?
+             """, (query,)).fetchall()
+
+    def insert_entity(self, entity_id: str, type: str = "unknown"):
+        """Insert a new entity."""
+        with self.storage._write_lock:
+             self.storage.con.execute("""
+                INSERT OR IGNORE INTO entities (entity_id, type) VALUES (?, ?)
+             """, (entity_id, type))
+             self.storage.con.commit()
+
+    def insert_kg_triple(self, subject: str, relation: str, object_: str):
+        """Insert a new triple."""
+        with self.storage._write_lock:
+             # Ensure entities exist
+             self.storage.con.execute("""
+                INSERT OR IGNORE INTO entities (entity_id, type) VALUES (?, 'unknown')
+             """, (subject,))
+             self.storage.con.execute("""
+                INSERT OR IGNORE INTO entities (entity_id, type) VALUES (?, 'unknown')
+             """, (object_,))
+
+             self.storage.con.execute("""
+                INSERT OR IGNORE INTO triples (subject, relation, object) VALUES (?, ?, ?)
+             """, (subject, relation, object_))
+             self.storage.con.commit()
+
+    def graph_explain(self, entity: str):
+        """Explain the neighborhood of an entity."""
+        neighbors = self.get_kg_neighbors(entity)
+        if not neighbors:
+            return f"No knowledge found for {entity}."
+
+        explanation = [f"Knowledge about {entity}:"]
+        for s, r, o in neighbors:
+            explanation.append(f"- {s} {r} {o}")
+        return "\n".join(explanation)
+
+    def maintain_kg(self):
+        """Run maintenance tasks."""
+        print("🔧 Running KG Maintenance...")
+        with self.storage._write_lock:
+             # 1. Remove dead-end entities (those not in any triple)
+             # Entities are only created when triples are added, but deletions might leave orphans
+             self.storage.con.execute("""
+                DELETE FROM entities
+                WHERE entity_id NOT IN (SELECT subject FROM triples)
+                  AND entity_id NOT IN (SELECT object FROM triples)
+             """)
+
+             # 2. Merge duplicate entities (Case-insensitive merge)
+             # Find entities that are same case-insensitively but different string
+             # e.g., "Alice" and "alice"
+             # We want to pick a canonical one (e.g. lowercase or most frequent)
+             # For simplicity, we merge to lowercase.
+
+             # This is complex in SQL alone without temporary tables or cursors for general case.
+             # Simplified approach: Update triples to use lowercase subject/object, then rely on step 1 to clean up.
+             # But this loses capitalization.
+
+             # Better approach: Just ensure canonicalization during Insert (which we do in Validator).
+             # So here we might just handle legacy data or accidental drifts.
+
+             # 2. Merge duplicate entities (Case-insensitive merge)
+             # We will stick to deleting orphans for now to be safe.
+             # Complicated logic to merge duplicates via SQL is risky without more extensive testing setup.
+             # The validator ensures new data is canonical (lowercased).
+             # So over time, maintenance just needs to remove things that fall out of use.
+             pass
+
+        print("✅ KG Maintenance complete.")

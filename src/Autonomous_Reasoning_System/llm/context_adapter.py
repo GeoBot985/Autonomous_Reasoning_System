@@ -24,6 +24,7 @@ class ContextAdapter:
         self.consolidator = ReasoningConsolidator()
         self.turn_counter = 0
         self.history = [] # Short-term conversation history
+        self.startup_context = {}  # Stores startup info like time and location
 
         # Load recent conversation history from persistence
         if self.memory:
@@ -59,6 +60,10 @@ class ContextAdapter:
             except Exception as e:
                 print(f"[ContextAdapter] Error loading history: {e}")
 
+    def set_startup_context(self, context: dict):
+        """Sets the startup context (e.g. location, time)."""
+        self.startup_context = context
+
     # ------------------------------------------------------------------
     def run(self, user_input: str, system_prompt: str = None) -> str:
         self.turn_counter += 1
@@ -76,10 +81,18 @@ class ContextAdapter:
         if self.history:
              history_text = "\nRECENT CONVERSATION:\n" + "\n".join(self.history[-5:]) + "\n"
 
-        if memory_text or history_text:
+        # Build startup context string
+        startup_info = ""
+        if self.startup_context:
+            startup_info = "\nCURRENT CONTEXT:\n"
+            for key, value in self.startup_context.items():
+                startup_info += f"- {key}: {value}\n"
+
+        if memory_text or history_text or startup_info:
             system_prompt = f"""
 YOU ARE TYRONE.
 
+{startup_info}
 LONG TERM MEMORY (FACTS):
 {memory_text}
 

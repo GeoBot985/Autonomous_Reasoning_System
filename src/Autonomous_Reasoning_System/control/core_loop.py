@@ -25,9 +25,11 @@ from Autonomous_Reasoning_System.memory.vector_store import VectorStore
 logger = logging.getLogger(__name__)
 
 class CoreLoop:
-    def __init__(self):
+    def __init__(self, verbose: bool = False):
         # 1. Initialize Dispatcher first
         self.dispatcher = Dispatcher()
+        self.verbose = verbose
+        logger.setLevel(logging.DEBUG if verbose else logging.INFO)
 
         # 2. Initialize Core Services (Dependency Injection Root)
         self.embedder = EmbeddingModel()
@@ -111,26 +113,26 @@ class CoreLoop:
         5. Update Memory
         6. Reflection
         """
-        print(f"\n[CORE LOOP] Received input: {text}")
+        logger.debug(f"[CORE LOOP] Received input: {text}")
         start_time = time.time()
 
         # --- Step 0: Check Goals (Periodic/Background) ---
         # We do this at the start of an interaction to simulate "thinking about long-term goals"
         # In a real agent, this would happen on a clock or when idle.
         try:
-             goal_status = self.goal_manager.check_goals()
-             if goal_status and "No actions needed" not in goal_status:
-                 print(f"[GOALS] {goal_status}")
-                 # Optionally, we could feed this into the context or decide to prioritize it
+            goal_status = self.goal_manager.check_goals()
+            if goal_status and "No actions needed" not in goal_status:
+                logger.debug(f"[GOALS] {goal_status}")
+                # Optionally, we could feed this into the context or decide to prioritize it
         except Exception as e:
-             print(f"[GOALS] Error checking goals: {e}")
+            logger.error(f"[GOALS] Error checking goals: {e}")
 
         # --- Step 1: Use Router to determine pipeline ---
         route_decision = self.router.resolve(text)
         intent = route_decision["intent"]
         family = route_decision.get("family", "unknown")
         pipeline = route_decision["pipeline"]
-        print(f"[ROUTER] Intent: {intent} (Family: {family}) | Pipeline: {pipeline}")
+        logger.debug(f"[ROUTER] Intent: {intent} (Family: {family}) | Pipeline: {pipeline}")
 
         # --- Step 2: Build a plan ---
         # If intent requires complex planning, we decompose.
@@ -140,14 +142,14 @@ class CoreLoop:
             # Or we delegate to PlanBuilder directly.
             # Let's stick to plan_builder directly for now as per original logic, but enhanced.
             goal, plan = self.plan_builder.new_goal_with_plan(text)
-            print(f"[PLANNER] Created multi-step plan: {plan.id}")
+            logger.debug(f"[PLANNER] Created multi-step plan: {plan.id}")
         else:
             # Simple execution: Treat the original input as the step description
             # The PlanExecutor will route this step, effectively executing the pipeline determined by Router
             goal = self.plan_builder.new_goal(text)
             # We implicitly use the pipeline selected by the router for this "step"
             plan = self.plan_builder.build_plan(goal, [text])
-            print(f"[PLANNER] Created single-step execution plan: {plan.id}")
+            logger.debug(f"[PLANNER] Created single-step execution plan: {plan.id}")
 
         # --- Step 3: Execute via Dispatcher (PlanExecutor uses Dispatcher/Router) ---
         # Note: PlanExecutor calls router.route(step.description) internally if no plan exists?
@@ -184,7 +186,7 @@ class CoreLoop:
              final_output = f"Plan suspended. {execution_result.get('message')}"
         else:
             final_output = f"Execution failed: {execution_result.get('errors')}"
-            print(f"[EXEC] Failed: {final_output}")
+            logger.warning(f"[EXEC] Failed: {final_output}")
 
         # --- Step 4: Return output ---
         # (We prepare it here, returns at end)
@@ -195,20 +197,20 @@ class CoreLoop:
         # We add an episodic memory of this interaction cycle.
         interaction_summary = f"User: {text} | Intent: {intent} | Family: {family} | Result: {final_output}"
         self.memory.store(interaction_summary, memory_type="episodic", importance=0.5)
-        print("[MEMORY] Interaction stored.")
+        logger.debug("[MEMORY] Interaction stored.")
 
         # --- Step 6: Store Reflection if enabled ---
         reflection_data = None
         # We reflect if the interaction was significant or if specifically requested (already handled by intent)
         # Or we can do a post-interaction reflection
         if intent not in ["deterministic", "fact_stored"] and len(text) > 10:
-             reflection_data = self.reflector.interpret(f"Reflect on this interaction: {interaction_summary}")
-             if reflection_data:
-                 print(f"[REFLECTION] {reflection_data}")
-                 # Store reflection
-                 self.memory.store(str(reflection_data), memory_type="reflection", importance=0.3)
-                 # Reinforce confidence
-                 self.confidence.reinforce()
+            reflection_data = self.reflector.interpret(f"Reflect on this interaction: {interaction_summary}")
+            if reflection_data:
+                logger.debug(f"[REFLECTION] {reflection_data}")
+                # Store reflection
+                self.memory.store(str(reflection_data), memory_type="reflection", importance=0.3)
+                # Reinforce confidence
+                self.confidence.reinforce()
 
         duration = time.time() - start_time
         return {
@@ -221,7 +223,7 @@ class CoreLoop:
 
     def run_interactive(self):
         self.running = True
-        print("\nTyrone Core Loop is running. Type 'exit' to stop.\n")
+        logger.info("Tyrone Core Loop is running. Type 'exit' to stop.")
 
         while self.running:
             attention.set_silent(True)
@@ -234,7 +236,7 @@ class CoreLoop:
                 continue
 
             if text.lower() in {"exit", "quit"}:
-                print("Exiting core loop.")
+                logger.info("Exiting core loop.")
                 self.running = False
                 break
 
@@ -243,11 +245,10 @@ class CoreLoop:
                 self.run_once(text)
             except Exception as e:
                 logger.error(f"Error in run_once: {e}", exc_info=True)
-                print(f"Error: {e}")
             finally:
                 attention.release()
 
-            print("\n---\n")
+            logger.debug("---")
 
 
 if __name__ == "__main__":

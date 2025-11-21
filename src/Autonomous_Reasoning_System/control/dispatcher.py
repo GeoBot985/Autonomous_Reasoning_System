@@ -154,6 +154,15 @@ class Dispatcher:
                 val = arguments[arg_name]
                 expected_type = rules.get("type")
 
+                # Basic coercion: allow numeric strings where int is expected
+                if expected_type == int and isinstance(val, str):
+                    try:
+                        arguments[arg_name] = int(val)
+                        val = arguments[arg_name]
+                    except ValueError:
+                        errors.append(f"Argument '{arg_name}' expected int, could not coerce from string '{val}'.")
+                        continue
+
                 # Handle typing.Union or similar complex types if possible, but sticking to basic types for now
                 # or allow user to pass a tuple of types as expected_type (standard isinstance behavior)
                 if expected_type:

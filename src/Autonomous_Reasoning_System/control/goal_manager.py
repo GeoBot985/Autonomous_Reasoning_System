@@ -107,6 +107,16 @@ class GoalManager:
 
         return "\n".join(actions_taken) if actions_taken else "No actions needed on goals."
 
+    def get_goals_list(self, status: str = None) -> list:
+        """
+        Return active goals as a list of plain dicts for fast, clean consumption.
+        Optionally filter by status.
+        """
+        df = self.memory.get_active_goals()
+        if status:
+            df = df[df["status"] == status]
+        return df.to_dict(orient="records") if not df.empty else []
+
     def _plan_goal(self, goal_id: str, goal_text: str):
         """Builds a plan for a goal."""
         logger.info(f"Building plan for goal: {goal_text}")

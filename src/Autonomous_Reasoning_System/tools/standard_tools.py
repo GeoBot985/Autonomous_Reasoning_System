@@ -19,6 +19,24 @@ def register_tools(dispatcher, components: Dict[str, Any]):
             - "goal_manager" (optional)
     """
 
+    def _format_results(results) -> str:
+        """Pretty-print list/dict results for console readability."""
+        if results is None:
+            return "No results."
+        if isinstance(results, str):
+            return results
+        if isinstance(results, list):
+            if not results:
+                return "No results."
+            lines = []
+            for r in results:
+                if isinstance(r, dict) and "text" in r:
+                    lines.append(f"- {r['text']}")
+                else:
+                    lines.append(f"- {r}")
+            return "\n".join(lines)
+        return str(results)
+
     # 1. Analyze Intent
     def analyze_intent_handler(text: str, **kwargs):
         analyzer = components.get("intent_analyzer")
@@ -55,7 +73,7 @@ def register_tools(dispatcher, components: Dict[str, Any]):
         if memory:
             # Assuming retrieve method exists and returns list
             results = memory.retrieve(text, k=3)
-            return results
+            return _format_results(results)
         return "Memory component not available."
 
     dispatcher.register_tool(
@@ -111,7 +129,8 @@ def register_tools(dispatcher, components: Dict[str, Any]):
         target_text = goal or text
         if plan_builder:
             steps = plan_builder.decompose_goal(target_text)
-            return steps
+            # Pretty-print steps for console use
+            return "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps)) if steps else "No steps generated."
         return ["No PlanBuilder available"]
 
     dispatcher.register_tool(
@@ -211,11 +230,11 @@ def register_tools(dispatcher, components: Dict[str, Any]):
              return f"Stored: {text}"
         elif effective_intent in ["search", "recall", "find", "lookup"]:
              results = memory.retrieve(text, k=3)
-             return results
+             return _format_results(results)
         else:
              # Default to search if unknown intent in memory family
              results = memory.retrieve(text, k=3)
-             return results
+             return _format_results(results)
 
     dispatcher.register_tool(
         "handle_memory_ops",

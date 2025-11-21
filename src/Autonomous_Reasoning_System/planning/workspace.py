@@ -23,3 +23,16 @@ class Workspace:
     def snapshot(self) -> dict:
         """Return a shallow copy of the workspace contents."""
         return dict(self.data)
+
+    def to_dict(self) -> dict:
+        """Return serializable dictionary."""
+        # Ensure all values are JSON serializable, or handle exceptions
+        # For now, we assume simple types or ignore errors
+        return self.data.copy()
+
+    @staticmethod
+    def from_dict(data: dict):
+        ws = Workspace()
+        if data:
+            ws.data = data
+        return ws

@@ -110,8 +110,8 @@ class Plan:
              "steps": [s.to_dict() for s in self.steps],
              "current_index": self.current_index,
              "status": self.status,
-             "created_at": self.created_at.isoformat()
-             # workspace serialization skipped for DB storage or handled separately
+             "created_at": self.created_at.isoformat(),
+             "workspace": self.workspace.to_dict()
          }
 
     @staticmethod
@@ -123,7 +123,8 @@ class Plan:
             steps=[Step.from_dict(s) for s in data["steps"]],
             current_index=data.get("current_index", 0),
             status=data["status"],
-            created_at=datetime.fromisoformat(data["created_at"])
+            created_at=datetime.fromisoformat(data["created_at"]),
+            workspace=Workspace.from_dict(data.get("workspace", {}))
         )
         return plan
 

@@ -32,6 +32,6 @@ class VectorMemory:
         """
         Retrieve top-k semantically similar memories.
         """
-        q_vec = self.embedder.embed(query)
+        q_vec = np.array(self.embedder.embed(query))
         results = self.vectors.search(q_vec, k)
         return results

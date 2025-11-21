@@ -238,9 +238,9 @@ class PlanBuilder:
             logger.error(f"[PlanBuilder] Error persisting plan {plan.id}: {e}")
 
     # ------------------- Goal Management -------------------
-    def new_goal(self, goal_text: str) -> Goal:
+    def new_goal(self, goal_text: str, goal_id: str | None = None) -> Goal:
         """Create a new goal with derived success/failure criteria."""
-        goal_id = str(uuid4())
+        goal_id = goal_id or str(uuid4())
         success, failure = self.derive_success_failure(goal_text)
         goal = Goal(
             id=goal_id,
@@ -251,11 +251,11 @@ class PlanBuilder:
         self.active_goals[goal.id] = goal
         return goal
     
-    def new_goal_with_plan(self, goal_text: str) -> tuple[Goal, Plan]:
+    def new_goal_with_plan(self, goal_text: str, plan_id: str | None = None, goal_id: str | None = None) -> tuple[Goal, Plan]:
         """Create a goal, derive conditions, decompose into a plan, and register it."""
-        goal = self.new_goal(goal_text)
+        goal = self.new_goal(goal_text, goal_id=goal_id)
         steps = self.decompose_goal(goal_text)
-        plan = self.build_plan(goal, steps)
+        plan = self.build_plan(goal, steps, plan_id=plan_id)
         logger.info(f"🧠 Created plan for goal '{goal_text}' with {len(steps)} steps.")
         return goal, plan
 
@@ -263,12 +263,12 @@ class PlanBuilder:
 
     # ------------------- Plan Construction -------------------
 
-    def build_plan(self, goal: Goal, step_descriptions: List[str]) -> Plan:
+    def build_plan(self, goal: Goal, step_descriptions: List[str], plan_id: str | None = None) -> Plan:
         """
         Create a plan for a goal, based on a list of step descriptions.
         """
         steps = [Step(id=str(uuid4()), description=s) for s in step_descriptions]
-        plan = Plan(id=str(uuid4()), goal_id=goal.id, title=goal.text, steps=steps)
+        plan = Plan(id=plan_id or str(uuid4()), goal_id=goal.id, title=goal.text, steps=steps)
         goal.plan = plan
         self.active_plans[plan.id] = plan
 

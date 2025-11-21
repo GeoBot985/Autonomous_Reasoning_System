@@ -1,7 +1,10 @@
 import os
 import pickle
 import pandas as pd
-import faiss
+try:
+    import faiss  # noqa: F401
+except ImportError:
+    faiss = None
 from pathlib import Path
 import threading
 
@@ -116,6 +119,8 @@ class PersistenceService:
     # ------------------------------------------------------------------
     def load_vector_index(self):
         """Load FAISS index."""
+        if not faiss:
+            return None
         if self.vector_index_path.exists():
             try:
                 return faiss.read_index(str(self.vector_index_path))
@@ -125,6 +130,8 @@ class PersistenceService:
 
     def save_vector_index(self, index):
         """Save FAISS index."""
+        if not faiss:
+            return
         try:
             faiss.write_index(index, str(self.vector_index_path))
             print(f"[Persistence] Saved vector index to {self.vector_index_path}")

@@ -1,5 +1,6 @@
 import time
 import logging
+import asyncio
 from datetime import datetime
 from Autonomous_Reasoning_System.control.dispatcher import Dispatcher
 from Autonomous_Reasoning_System.control.router import Router
@@ -31,6 +32,7 @@ class CoreLoop:
         self.dispatcher = Dispatcher()
         self.verbose = verbose
         logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+        self._stream_subscribers: dict[str, set[asyncio.Queue]] = {}
 
         # 2. Initialize Core Services (Dependency Injection Root)
         self.embedder = EmbeddingModel()
@@ -104,7 +106,7 @@ class CoreLoop:
         # Hydrate active plans
         self.plan_builder.load_active_plans()
 
-    def run_once(self, text: str):
+    def run_once(self, text: str, plan_id: str | None = None):
         """
         Executes the Full Reasoning Loop:
         0. Check Goals
@@ -147,15 +149,17 @@ class CoreLoop:
             # For planning family, we use the tool provided in pipeline (plan_steps) to get steps?
             # Or we delegate to PlanBuilder directly.
             # Let's stick to plan_builder directly for now as per original logic, but enhanced.
-            goal, plan = self.plan_builder.new_goal_with_plan(text)
+            goal, plan = self.plan_builder.new_goal_with_plan(text, plan_id=plan_id)
             logger.debug(f"[PLANNER] Created multi-step plan: {plan.id}")
+            self._broadcast_thought(plan.id, f"Plan created with {len(plan.steps)} steps.")
         else:
             # Simple execution: Treat the original input as the step description
             # The PlanExecutor will route this step, effectively executing the pipeline determined by Router
             goal = self.plan_builder.new_goal(text)
             # We implicitly use the pipeline selected by the router for this "step"
-            plan = self.plan_builder.build_plan(goal, [text])
+            plan = self.plan_builder.build_plan(goal, [text], plan_id=plan_id)
             logger.debug(f"[PLANNER] Created single-step execution plan: {plan.id}")
+            self._broadcast_thought(plan.id, "Single-step plan created.")
 
         # --- Step 3: Execute via Dispatcher (PlanExecutor uses Dispatcher/Router) ---
         # Note: PlanExecutor calls router.route(step.description) internally if no plan exists?
@@ -226,7 +230,7 @@ class CoreLoop:
         duration = time.time() - start_time
         Metrics().record_time("core_loop_duration", duration)
 
-        return {
+        result = {
             "summary": final_output,
             "decision": route_decision,
             "plan_id": plan.id,
@@ -235,6 +239,9 @@ class CoreLoop:
             # Legacy keys for tests
             "reflection_data": reflection_data
         }
+
+        self._broadcast_thought(plan.id, f"Plan status: {status}. Output: {final_output}")
+        return result
 
     def initialize_context(self):
         """Initializes the context with system information (time, location)."""
@@ -279,6 +286,49 @@ class CoreLoop:
                 attention.release()
 
             logger.debug("---")
+
+    # ------------------------------------------------------------------
+    # API helpers for background execution and streaming
+    # ------------------------------------------------------------------
+    def run_background(self, goal: str, plan_id: str):
+        """Run a goal asynchronously for API calls."""
+        asyncio.get_event_loop().create_task(self._run_goal_async(goal, plan_id))
+
+    async def _run_goal_async(self, goal: str, plan_id: str):
+        result = await asyncio.to_thread(self.run_once, goal, plan_id)
+        self._broadcast_thought(plan_id, f"Completed plan {plan_id}")
+        # Signal end
+        self._broadcast_thought(plan_id, None)
+        return result
+
+    def get_plan_status(self, plan_id: str):
+        """Return plan progress summary if available."""
+        summary = self.plan_builder.get_plan_summary(plan_id)
+        if summary and "error" not in summary:
+            return summary
+        return None
+
+    def subscribe_stream(self, plan_id: str, queue: asyncio.Queue):
+        self._stream_subscribers.setdefault(plan_id, set()).add(queue)
+
+    def unsubscribe_stream(self, plan_id: str):
+        if plan_id in self._stream_subscribers:
+            for q in list(self._stream_subscribers[plan_id]):
+                try:
+                    q.put_nowait(None)
+                except Exception:
+                    pass
+            del self._stream_subscribers[plan_id]
+
+    def _broadcast_thought(self, plan_id: str | None, thought: str | None):
+        """Push messages to SSE subscribers."""
+        if not plan_id or plan_id not in self._stream_subscribers:
+            return
+        for q in list(self._stream_subscribers.get(plan_id, [])):
+            try:
+                q.put_nowait(thought)
+            except Exception:
+                continue
 
 
 if __name__ == "__main__":

@@ -65,6 +65,7 @@ class MemoryStorage:
                 status VARCHAR,
                 steps VARCHAR,
                 metadata VARCHAR,
+                plan_id VARCHAR,
                 created_at TIMESTAMP,
                 updated_at TIMESTAMP
             )
@@ -222,8 +223,8 @@ class MemoryStorage:
         """Insert goal into DuckDB."""
         self.con.execute("""
             INSERT INTO goals (
-                id, text, priority, status, steps, metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                id, text, priority, status, steps, metadata, plan_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             goal_data['id'],
             goal_data.get('text', ''),
@@ -231,6 +232,7 @@ class MemoryStorage:
             goal_data.get('status', 'pending'),
             goal_data.get('steps', '[]'),
             goal_data.get('metadata', '{}'),
+            goal_data.get('plan_id', None),
             str(goal_data.get('created_at')),
             str(goal_data.get('updated_at'))
         ))

@@ -11,72 +11,161 @@ class TestPlanExecution(unittest.TestCase):
 
     def setUp(self):
         # Mock dependencies
-        self.mock_memory = MagicMock()
-        self.mock_reflector = MagicMock()
+        self.mock_plan_builder = MagicMock(spec=PlanBuilder)
+        self.mock_dispatcher = MagicMock(spec=Dispatcher)
+        self.mock_router = MagicMock(spec=Router)
 
-        # We need to patch get_memory_storage inside PlanBuilder if it's still used by default
-        # But we can inject it.
+        # Create Executor with mocks
+        self.plan_executor = PlanExecutor(self.mock_plan_builder, self.mock_dispatcher, self.mock_router)
 
-        # However, PlanBuilder calls self.reasoner which calls PlanReasoner which might import singletons.
-        # Let's mock PlanReasoner if needed or assume imports are fixed.
-        # Wait, we didn't check PlanReasoner imports!
+        # Setup a sample plan
+        self.plan_id = "test_plan_1"
+        self.step1 = Step(id="s1", description="Step 1")
+        self.step2 = Step(id="s2", description="Step 2")
 
-        self.plan_builder = PlanBuilder(reflector=self.mock_reflector, memory_storage=self.mock_memory)
+        self.plan = MagicMock(spec=Plan)
+        self.plan.id = self.plan_id
+        self.plan.title = "Test Plan"
+        self.plan.status = "pending"
+        self.plan.steps = [self.step1, self.step2]
+        self.plan.current_index = 0
+        self.plan.workspace = MagicMock()
+        self.plan.workspace.snapshot.return_value = {}
 
-        self.dispatcher = Dispatcher()
-        self.router = Router(self.dispatcher)
-        self.plan_executor = PlanExecutor(self.plan_builder, self.dispatcher, self.router)
+        # Setup default behavior: not all done
+        self.plan.all_done.return_value = False
 
-    def test_plan_generation_correctness(self):
-        # Mock decompose_goal
-        with patch.object(self.plan_builder, 'decompose_goal', return_value=["Step 1", "Step 2"]):
-             goal, plan = self.plan_builder.new_goal_with_plan("Test Goal")
+        # Setup next_step behavior
+        # By default, it returns step1
+        self.plan.next_step.return_value = self.step1
 
-             self.assertEqual(goal.text, "Test Goal")
-             self.assertEqual(len(plan.steps), 2)
-             self.assertEqual(plan.steps[0].description, "Step 1")
-             self.assertEqual(plan.steps[1].description, "Step 2")
-             self.assertEqual(plan.status, "pending")
+        # Setup active_plans in builder
+        self.mock_plan_builder.active_plans = {self.plan_id: self.plan}
+        self.mock_plan_builder.get_plan_summary.return_value = {"status": "running"}
 
-    def test_plan_execution_success(self):
-        # Setup plan
-        goal, plan = self.plan_builder.new_goal_with_plan("Test Execution")
-        # Manually set steps to avoid LLM dependency in test
-        plan.steps = [
-            Step(id="s1", description="Task 1"),
-            Step(id="s2", description="Task 2")
-        ]
 
-        # Mock Router.route to always succeed
-        with patch.object(self.router, 'resolve') as mock_resolve:
-             # Mocking router execution logic is tricky as it involves dispatcher.
-             # PlanExecutor calls router.route? No, PlanExecutor._execute_step calls router.resolve?
-             # Let's check PlanExecutor code. Assuming standard logic:
-             pass
+    def test_execute_next_step_success(self):
+        """Test successful execution of a single step."""
+        # Setup router to return success
+        self.mock_router.route.return_value = {
+            "status": "success",
+            "results": [{"status": "success"}],
+            "final_output": "Output 1"
+        }
 
-        # Actually PlanExecutor calls router.resolve (or similar) and then dispatcher.dispatch.
-        # Let's just mock the whole `_execute_step` method on PlanExecutor to isolate logic
-        # OR mock Router.resolve and Dispatcher.dispatch
+        # Execute
+        result = self.plan_executor.execute_next_step(self.plan_id)
 
-        # But let's stick to mocking internal calls to verify flow if `_execute_step` is complex.
-        # The original test mocked `self.router.route`.
-        # If `route` doesn't exist anymore (maybe replaced by `resolve`), we should check.
-        # In CoreLoop, we see `router.resolve(text)`.
+        # Verify
+        self.assertEqual(result["status"], "running")
+        self.assertEqual(result["step_completed"], "Step 1")
 
-        # Let's patch `router.resolve` and `dispatcher.dispatch`
-        pass
-        # Re-reading PlanExecutor code would be good, but I don't have it open.
-        # Assuming `execute_plan` iterates steps and calls something.
+        # Verify router was called with description
+        self.mock_router.route.assert_called_with("Step 1")
 
-        # To be safe, I will mock `PlanExecutor._execute_step`
-        with patch.object(self.plan_executor, '_execute_step') as mock_execute_step:
-            mock_execute_step.return_value = {"status": "success", "result": "result1"}
+        # Verify plan builder updated step
+        self.mock_plan_builder.update_step.assert_called_with(self.plan_id, "s1", "complete", result="Output 1")
 
-            result = self.plan_executor.execute_plan(plan.id)
 
-            self.assertEqual(result["status"], "success")
-            self.assertEqual(plan.status, "complete")
-            self.assertEqual(mock_execute_step.call_count, 2)
+    def test_execute_next_step_failure_retry_then_success(self):
+        """Test retry logic where first attempt fails, second succeeds."""
+        # First call to _execute_step (internal) needs to fail, second succeed.
+        # Since _execute_step calls router.route, we can mock router.route to return different values.
+
+        failure_response = {
+            "status": "success", # Router returns success structurally but results might fail
+            "results": [{"status": "error", "errors": "Some error"}]
+        }
+        success_response = {
+            "status": "success",
+            "results": [{"status": "success"}],
+            "final_output": "Output Retry"
+        }
+
+        self.mock_router.route.side_effect = [failure_response, success_response]
+
+        # Execute
+        result = self.plan_executor.execute_next_step(self.plan_id)
+
+        # Verify
+        self.assertEqual(result["status"], "running")
+        self.assertEqual(result["step_completed"], "Step 1")
+
+        # Verify router called twice
+        self.assertEqual(self.mock_router.route.call_count, 2)
+
+        # Verify update_step called with success eventually
+        self.mock_plan_builder.update_step.assert_called_with(self.plan_id, "s1", "complete", result="Output Retry")
+
+    def test_execute_next_step_failure_suspend(self):
+        """Test plan suspension after max retries."""
+        # Setup router to always fail
+        failure_response = {
+            "status": "success",
+            "results": [{"status": "error", "errors": "Persistent error"}]
+        }
+        self.mock_router.route.return_value = failure_response
+
+        # Execute
+        result = self.plan_executor.execute_next_step(self.plan_id)
+
+        # Verify
+        self.assertEqual(result["status"], "suspended")
+        self.assertEqual(result["failed_step"], "Step 1")
+
+        # Verify retry count (retry_limit=2 -> 3 attempts total)
+        self.assertEqual(self.mock_router.route.call_count, 3)
+
+        # Verify plan status update
+        self.mock_plan_builder.update_step.assert_called_with(self.plan_id, "s1", "suspended", result=unittest.mock.ANY)
+        # Verify plan object status set to suspended
+        self.assertEqual(self.plan.status, "suspended")
+
+    def test_execute_next_step_complete_plan(self):
+        """Test that finishing the last step marks the plan as complete."""
+        # Setup plan to indicate all done after this step
+        self.plan.all_done.return_value = True
+
+        self.mock_router.route.return_value = {
+            "status": "success",
+            "results": [{"status": "success"}],
+            "final_output": "Done"
+        }
+
+        self.mock_plan_builder.get_plan_summary.return_value = {"status": "complete"}
+
+        # Execute
+        result = self.plan_executor.execute_next_step(self.plan_id)
+
+        # Verify
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(self.plan.status, "complete")
+
+        # Verify summary returned
+        self.mock_plan_builder.get_plan_summary.assert_called_with(self.plan_id)
+
+    def test_execute_next_step_already_complete(self):
+        """Test behavior when plan is already complete."""
+        self.plan.status = "complete"
+        self.mock_plan_builder.get_plan_summary.return_value = {"status": "complete", "info": "already done"}
+
+        result = self.plan_executor.execute_next_step(self.plan_id)
+
+        self.assertEqual(result["status"], "complete")
+        self.mock_router.route.assert_not_called()
+
+    def test_execute_next_step_no_more_steps(self):
+        """Test behavior when no pending steps remain."""
+        self.plan.next_step.return_value = None
+        self.plan.all_done.return_value = True # Assuming if no next step, it's done
+
+        self.mock_plan_builder.get_plan_summary.return_value = {"status": "complete"}
+
+        result = self.plan_executor.execute_next_step(self.plan_id)
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(self.plan.status, "complete")
+        self.mock_router.route.assert_not_called()
 
 if __name__ == '__main__':
     unittest.main()

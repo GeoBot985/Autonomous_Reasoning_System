@@ -73,7 +73,22 @@ Context-sensitive memory prioritization
 
 Multi-agent collaboration
 
-📜 License
+---
+
+## 🛡️ Operational Responsibilities and Data Ownership
+
+The Autonomous Reasoning System is designed as a worker-operated tool. By deploying this software, you (the operator) accept full responsibility for its lifecycle and data integrity.
+
+1.  **Data Ownership**: All data stored in the `/data` directory is owned and managed by the operator. The system provides tools to persist and retrieve this data, but it does not perform automatic off-site backups.
+2.  **Liability**: The developer assumes no liability for data corruption, deletion, or misuse of the system. The application is programmed to halt intentionally upon detecting critical failures or potential misuse.
+3.  **Maintenance**:
+    - **Rebuilds**: If the system requires a rebuild (e.g., memory corruption), it will request operator confirmation.
+    - **Backups**: Regular backups of the `/data` directory are the sole duty of the operator.
+4.  **Observability**: The system exposes health and metrics endpoints (`/healthz`, `/metrics`) to assist the operator in monitoring system stability. It is the operator's responsibility to ensure these signals are monitored.
+
+---
+
+## 📜 License
 
 MIT License — free to use, modify, and distribute with attribution.
 

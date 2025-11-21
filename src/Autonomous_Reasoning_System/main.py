@@ -3,12 +3,20 @@ from Autonomous_Reasoning_System.infrastructure.logging_utils import setup_loggi
 from Autonomous_Reasoning_System.infrastructure import startup_validator
 from Autonomous_Reasoning_System import init_runtime
 from Autonomous_Reasoning_System.infrastructure import config
+from Autonomous_Reasoning_System.infrastructure.observability import HealthServer, Metrics
 from pathlib import Path
 import os
 import sys
 
 def main():
     setup_logging()
+
+    # Start Health & Metrics Server
+    health_server = HealthServer(port=8000)
+    health_server.start()
+
+    # Log Startup
+    Metrics().increment("system_startup")
 
     # Startup Protection Layer
     data_dir = Path(config.MEMORY_DB_PATH).parent

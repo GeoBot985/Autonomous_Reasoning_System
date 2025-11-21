@@ -29,6 +29,15 @@ def test_core_loop_learning_cycle(mock_heartbeat, MockMemoryInterface):
         "insight": "Test insight"
     }
 
+    # Mock Router.resolve directly since run_once calls resolve, not route (except later in PlanExecutor)
+    tyrone.router.resolve = MagicMock(return_value={
+        "intent": "reflect",
+        "family": "reflection",
+        "pipeline": ["perform_reflection"],
+        "entities": {},
+        "analysis_data": {}
+    })
+
     # Run the method
     result = tyrone.run_once("Reflect on how confident you feel about recent progress.")
 

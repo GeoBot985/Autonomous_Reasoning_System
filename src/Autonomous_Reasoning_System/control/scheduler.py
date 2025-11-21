@@ -2,8 +2,6 @@ import threading
 import time
 import logging
 from datetime import datetime
-import duckdb
-
 from Autonomous_Reasoning_System.infrastructure.observability import Metrics
 # from Autonomous_Reasoning_System.tools.action_executor import ActionExecutor # Removed dumb executor
 from Autonomous_Reasoning_System.control.attention_manager import attention  # 🧭 added
@@ -13,13 +11,13 @@ logger = logging.getLogger(__name__)
 lock = threading.Lock()  # global lock shared by the thread
 
 
-def check_due_reminders(memory, lookahead_minutes=1):
+def check_due_reminders(memory_storage, lookahead_minutes=1):
     """
     Scan stored memories for any 'task' entries due within ±lookahead_minutes,
     print reminders once, and mark them as 'triggered' to avoid repeats.
     """
     try:
-        df = memory.get_all_memories()
+        df = memory_storage.get_all_memories()
         if df.empty or "scheduled_for" not in df.columns:
             return
 
@@ -41,18 +39,11 @@ def check_due_reminders(memory, lookahead_minutes=1):
 
             # Mark reminder as triggered so it fires only once
             try:
-                duckdb.sql(f"""
-                    CREATE OR REPLACE TABLE memory_temp AS
-                    SELECT * FROM read_parquet('{memory.db_path}');
-                """)
-                duckdb.sql(f"""
-                    UPDATE memory_temp
-                    SET status = 'triggered'
-                    WHERE id = '{row['id']}';
-                """)
-                duckdb.sql(
-                    f"COPY memory_temp TO '{memory.db_path}' (FORMAT PARQUET, OVERWRITE TRUE);"
-                )
+                with memory_storage._write_lock:
+                    memory_storage.con.execute(
+                        "UPDATE memory SET status = 'triggered' WHERE id = ?",
+                        (row["id"],)
+                    )
                 logger.info(f"✅ Marked reminder '{row['text'][:40]}...' as triggered.")
             except Exception as e:
                 logger.warning(f"[⚠️ ReminderUpdate] Failed to mark triggered: {e}")
@@ -95,7 +86,7 @@ def start_heartbeat_with_plans(learner, confidence, plan_builder, interval_secon
                         confidence.decay_all()
 
                     # --- reminder check ---
-                    check_due_reminders(learner.memory)
+                    check_due_reminders(learner.memory_storage if hasattr(learner, "memory_storage") else learner.memory)
 
                     # --- every few pulses, check active plans ---
                     counter += 1

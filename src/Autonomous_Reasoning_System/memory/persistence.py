@@ -1,10 +1,6 @@
 import os
 import pickle
 import pandas as pd
-try:
-    import faiss  # noqa: F401
-except ImportError:
-    faiss = None
 from pathlib import Path
 import threading
 
@@ -14,8 +10,6 @@ class PersistenceService:
     Responsible for loading and saving:
     - Deterministic memory (memory.parquet)
     - Episodic memory (episodes.parquet)
-    - Vector index (vector_index.faiss)
-    - Vector metadata (vector_meta.pkl)
     """
 
     _instance = None
@@ -117,48 +111,5 @@ class PersistenceService:
     # ------------------------------------------------------------------
     # Vector Index
     # ------------------------------------------------------------------
-    def load_vector_index(self):
-        """Load FAISS index."""
-        if not faiss:
-            return None
-        if self.vector_index_path.exists():
-            try:
-                return faiss.read_index(str(self.vector_index_path))
-            except Exception as e:
-                print(f"[Persistence] Error loading vector index: {e}")
-        return None
-
-    def save_vector_index(self, index):
-        """Save FAISS index."""
-        if not faiss:
-            return
-        try:
-            faiss.write_index(index, str(self.vector_index_path))
-            print(f"[Persistence] Saved vector index to {self.vector_index_path}")
-        except Exception as e:
-            print(f"[Persistence] Error saving vector index: {e}")
-
-    # ------------------------------------------------------------------
-    # Vector Metadata
-    # ------------------------------------------------------------------
-    def load_vector_metadata(self) -> list:
-        """Load vector metadata."""
-        if self.vector_meta_path.exists():
-            try:
-                with open(self.vector_meta_path, "rb") as f:
-                    return pickle.load(f)
-            except Exception as e:
-                print(f"[Persistence] Error loading vector metadata: {e}")
-        return []
-
-    def save_vector_metadata(self, metadata: list):
-        """Save vector metadata."""
-        try:
-            with open(self.vector_meta_path, "wb") as f:
-                pickle.dump(metadata, f)
-            print(f"[Persistence] Saved vector metadata to {self.vector_meta_path}")
-        except Exception as e:
-            print(f"[Persistence] Error saving vector metadata: {e}")
-
 def get_persistence_service():
     return PersistenceService()

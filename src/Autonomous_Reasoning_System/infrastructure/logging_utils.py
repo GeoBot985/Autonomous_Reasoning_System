@@ -1,6 +1,7 @@
 import logging
 import sys
 import os
+from Autonomous_Reasoning_System.infrastructure import config
 
 def setup_logging(default_level=logging.INFO):
     """
@@ -13,10 +14,6 @@ def setup_logging(default_level=logging.INFO):
     # Create a formatter
     formatter = logging.Formatter(log_format, date_format)
 
-    # Create a console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-
     # Configure the root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(default_level)
@@ -25,7 +22,18 @@ def setup_logging(default_level=logging.INFO):
     if root_logger.hasHandlers():
         root_logger.handlers.clear()
 
+    # Create a console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
+
+    # Create file handler in same directory as DB/memory files
+    log_dir = os.path.dirname(config.MEMORY_DB_PATH) or "."
+    os.makedirs(log_dir, exist_ok=True)
+    file_path = os.path.join(log_dir, "tyrone.log")
+    file_handler = logging.FileHandler(file_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
 
     logging.info("Logging system initialized.")
 

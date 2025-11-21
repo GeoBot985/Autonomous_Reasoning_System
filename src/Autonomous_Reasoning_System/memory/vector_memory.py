@@ -1,9 +1,11 @@
 # Autonomous_Reasoning_System/memory/vector_memory.py
+import logging
 from Autonomous_Reasoning_System.memory.storage import MemoryStorage
 from Autonomous_Reasoning_System.memory.embeddings import EmbeddingModel
 from Autonomous_Reasoning_System.memory.vector_store import VectorStore
 import numpy as np
 
+logger = logging.getLogger(__name__)
 
 class VectorMemory:
     """
@@ -11,7 +13,7 @@ class VectorMemory:
     """
 
     def __init__(self, memory_storage=None, embedding_model=None, vector_store=None):
-        print("🧠 Vector Memory initialized.")
+        logger.info("🧠 Vector Memory initialized.")
         self.storage = memory_storage or MemoryStorage()
         self.embedder = embedding_model or EmbeddingModel()
         self.vectors = vector_store or VectorStore()

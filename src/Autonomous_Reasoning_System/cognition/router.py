@@ -1,9 +1,11 @@
 import json
 import re
+import logging
 from Autonomous_Reasoning_System.llm.engine import call_llm
 from Autonomous_Reasoning_System.memory.memory_interface import MemoryInterface
 from Autonomous_Reasoning_System.control.dispatcher import Dispatcher
 
+logger = logging.getLogger(__name__)
 
 class Router:
     def __init__(self, dispatcher: Dispatcher = None, memory_interface: MemoryInterface = None):
@@ -128,11 +130,11 @@ class Router:
             if "context_adapter" not in decision["pipeline"]:
                 decision["pipeline"].append("context_adapter")
 
-            print(f"[ROUTER] Success → {decision['intent']} | {decision['pipeline']}")
+            logger.info(f"[ROUTER] Success → {decision['intent']} | {decision['pipeline']}")
             return decision
 
         except Exception as e:
-            print(f"[ROUTER] JSON parsing failed: {e}\nRaw output:\n{raw}\n")
+            logger.error(f"[ROUTER] JSON parsing failed: {e}\nRaw output:\n{raw}\n")
             # Final desperate fallback — but now extremely rare
             return {
                 "intent": "query",

@@ -44,9 +44,9 @@ class MemoryStorage:
         self.vector_store = vector_store
 
         if not self.embedder:
-             print("[WARN] MemoryStorage initialized without embedding_model. Vector search will fail.")
+             logger.warning("[WARN] MemoryStorage initialized without embedding_model. Vector search will fail.")
         if not self.vector_store:
-             print("[WARN] MemoryStorage initialized without vector_store. Vector search will fail.")
+             logger.warning("[WARN] MemoryStorage initialized without vector_store. Vector search will fail.")
 
     def init_db(self):
         """Create tables if they don't exist."""
@@ -128,9 +128,9 @@ class MemoryStorage:
             try:
                 vec = self.embedder.embed(text)
                 self.vector_store.add(new_id, text, vec, {"memory_type": memory_type, "source": source})
-                print(f"🧩 Embedded memory ({source}): {text[:50]}...")
+                logger.info(f"🧩 Embedded memory ({source}): {text[:50]}...")
             except Exception as e:
-                print(f"[WARN] Could not embed text: {e}")
+                logger.warning(f"[WARN] Could not embed text: {e}")
 
         return new_id
 
@@ -140,7 +140,7 @@ class MemoryStorage:
             with self._lock:
                 return self.con.execute("SELECT * FROM memory").df()
         except Exception as e:
-            print(f"[MemoryStorage] Error reading memories: {e}")
+            logger.error(f"[MemoryStorage] Error reading memories: {e}")
             return pd.DataFrame()
 
     # ------------------------------------------------------------------
@@ -170,7 +170,7 @@ class MemoryStorage:
             results = [(r[0], 1.0) for r in res]
             return results
         except Exception as e:
-            print(f"[MemoryStorage] search_text failed: {e}")
+            logger.error(f"[MemoryStorage] search_text failed: {e}")
             return []
 
     # ------------------------------------------------------------------
@@ -218,7 +218,7 @@ class MemoryStorage:
                       AND (status IS NULL OR status != 'completed')
                  """, (limit_time,)).df()
         except Exception as e:
-             print(f"[MemoryStorage] Error fetching due reminders: {e}")
+             logger.error(f"[MemoryStorage] Error fetching due reminders: {e}")
              return pd.DataFrame()
 
     # ------------------------------------------------------------------
@@ -227,7 +227,7 @@ class MemoryStorage:
         Update memory text by ID in DuckDB.
         """
         if not uid or not new_text:
-            print("[MemoryStorage] Invalid update parameters.")
+            logger.warning("[MemoryStorage] Invalid update parameters.")
             return False
 
         # Check if ID exists first
@@ -235,11 +235,11 @@ class MemoryStorage:
             try:
                 exists = self.con.execute("SELECT count(*) FROM memory WHERE id=?", (uid,)).fetchone()[0]
             except Exception as e:
-                    print(f"[MemoryStorage] Error checking memory existence: {e}")
+                    logger.error(f"[MemoryStorage] Error checking memory existence: {e}")
                     return False
 
             if exists == 0:
-                print(f"[MemoryStorage] Memory ID {uid} not found.")
+                logger.warning(f"[MemoryStorage] Memory ID {uid} not found.")
                 return False
 
             try:
@@ -256,7 +256,7 @@ class MemoryStorage:
                 logger.error(f"[MemoryStorage] update_memory failed for {uid}: {e}")
                 return False
 
-        print(f"📝 Updated memory {uid} in storage.")
+        logger.info(f"📝 Updated memory {uid} in storage.")
         return True
 
     # ------------------------------------------------------------------
@@ -296,7 +296,7 @@ class MemoryStorage:
             if not res.empty:
                 return res.iloc[0].to_dict()
         except Exception as e:
-            print(f"[MemoryStorage] Error getting goal {goal_id}: {e}")
+            logger.error(f"[MemoryStorage] Error getting goal {goal_id}: {e}")
         return None
 
     def get_all_goals(self) -> pd.DataFrame:
@@ -304,7 +304,7 @@ class MemoryStorage:
             with self._lock:
                 return self.con.execute("SELECT * FROM goals").df()
         except Exception as e:
-            print(f"[MemoryStorage] Error reading goals: {e}")
+            logger.error(f"[MemoryStorage] Error reading goals: {e}")
             return pd.DataFrame()
 
     def get_active_goals(self) -> pd.DataFrame:
@@ -312,7 +312,7 @@ class MemoryStorage:
             with self._lock:
                 return self.con.execute("SELECT * FROM goals WHERE status IN ('pending', 'active')").df()
         except Exception as e:
-            print(f"[MemoryStorage] Error reading active goals: {e}")
+            logger.error(f"[MemoryStorage] Error reading active goals: {e}")
             return pd.DataFrame()
 
     def update_goal(self, goal_id: str, updates: dict):
@@ -339,7 +339,7 @@ class MemoryStorage:
                     return False
             return True
         except Exception as e:
-            print(f"[MemoryStorage] Error updating goal {goal_id}: {e}")
+            logger.error(f"[MemoryStorage] Error updating goal {goal_id}: {e}")
             return False
 
     def delete_goal(self, goal_id: str):
@@ -355,5 +355,5 @@ class MemoryStorage:
                     return False
             return True
         except Exception as e:
-            print(f"[MemoryStorage] Error deleting goal {goal_id}: {e}")
+            logger.error(f"[MemoryStorage] Error deleting goal {goal_id}: {e}")
             return False

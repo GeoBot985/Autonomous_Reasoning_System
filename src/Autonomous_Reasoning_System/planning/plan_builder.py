@@ -6,6 +6,7 @@ Creates and manages goal–plan–step hierarchies for Tyrone.
 This module handles structure and progress tracking only,
 leaving execution control to the CoreLoop or Scheduler.
 """
+import logging
 from Autonomous_Reasoning_System.llm.reflection_interpreter import ReflectionInterpreter
 from Autonomous_Reasoning_System.llm.plan_reasoner import PlanReasoner
 
@@ -15,6 +16,8 @@ from uuid import uuid4
 from typing import List, Optional, Dict, Any
 import json
 from .workspace import Workspace
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------
@@ -150,7 +153,7 @@ class PlanBuilder:
         self.active_plans: Dict[str, Plan] = {}
         self.memory = memory_storage
         if not self.memory:
-             print("[WARN] PlanBuilder initialized without memory_storage. Persistence disabled.")
+             logger.warning("[WARN] PlanBuilder initialized without memory_storage. Persistence disabled.")
 
         self.reflector = reflector or ReflectionInterpreter()
         self.reasoner = PlanReasoner()
@@ -171,7 +174,7 @@ class PlanBuilder:
                 )
             """)
         except Exception as e:
-            print(f"[PlanBuilder] Error initializing plans table: {e}")
+            logger.error(f"[PlanBuilder] Error initializing plans table: {e}")
 
     def load_active_plans(self):
         """Hydrate active plans from DB on startup."""
@@ -201,11 +204,11 @@ class PlanBuilder:
                          pass
                     count += 1
                 except Exception as e:
-                    print(f"[PlanBuilder] Error hydrating plan: {e}")
+                    logger.error(f"[PlanBuilder] Error hydrating plan: {e}")
 
-            print(f"[PlanBuilder] Hydrated {count} active plans.")
+            logger.info(f"[PlanBuilder] Hydrated {count} active plans.")
         except Exception as e:
-            print(f"[PlanBuilder] Error loading plans: {e}")
+            logger.error(f"[PlanBuilder] Error loading plans: {e}")
 
     def _persist_plan(self, plan: Plan):
         """Save plan state to DB."""
@@ -225,7 +228,7 @@ class PlanBuilder:
             self.memory.con.execute("INSERT INTO plans VALUES (?, ?, ?, ?)",
                                     (plan.id, data_json, plan.status, now_str))
         except Exception as e:
-            print(f"[PlanBuilder] Error persisting plan {plan.id}: {e}")
+            logger.error(f"[PlanBuilder] Error persisting plan {plan.id}: {e}")
 
     # ------------------- Goal Management -------------------
     def new_goal(self, goal_text: str) -> Goal:
@@ -246,7 +249,7 @@ class PlanBuilder:
         goal = self.new_goal(goal_text)
         steps = self.decompose_goal(goal_text)
         plan = self.build_plan(goal, steps)
-        print(f"🧠 Created plan for goal '{goal_text}' with {len(steps)} steps.")
+        logger.info(f"🧠 Created plan for goal '{goal_text}' with {len(steps)} steps.")
         return goal, plan
 
 
@@ -449,7 +452,7 @@ class PlanBuilder:
                     return parts
 
         except Exception as e:
-            print(f"[WARN] LLM decomposition failed: {e}")
+            logger.warning(f"[WARN] LLM decomposition failed: {e}")
 
         # --- Final fallback ---
         return ["Define objective", "Execute objective", "Verify outcome"]

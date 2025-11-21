@@ -1,10 +1,23 @@
 ﻿from Autonomous_Reasoning_System.control.core_loop import CoreLoop
 from Autonomous_Reasoning_System.infrastructure.logging_utils import setup_logging
-
+from Autonomous_Reasoning_System.infrastructure import startup_validator
+from Autonomous_Reasoning_System import init_runtime
+from Autonomous_Reasoning_System.infrastructure import config
+from pathlib import Path
+import os
 import sys
 
 def main():
     setup_logging()
+
+    # Startup Protection Layer
+    data_dir = Path(config.MEMORY_DB_PATH).parent
+    if not data_dir.exists() or not any(data_dir.iterdir()):
+         print("[Main] First launch detected or data directory empty. Initializing...")
+         init_runtime.bootstrap_runtime()
+
+    startup_validator.validate_startup()
+
     tyrone = CoreLoop()
     print("\n🚀 Tyrone is online and ready.\n")
     print("Type directly to interact. Type 'exit' to quit.\n")

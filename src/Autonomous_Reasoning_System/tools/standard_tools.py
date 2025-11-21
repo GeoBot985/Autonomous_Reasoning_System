@@ -36,7 +36,10 @@ def register_tools(dispatcher, components: Dict[str, Any]):
     def store_memory_handler(text: str, **kwargs):
         memory = components.get("memory")
         if memory:
-            memory.store(f"Stored fact: {text}", memory_type="episodic", importance=1.0)
+            memory.remember(
+                text=f"Stored fact: {text}",
+                metadata={"type": "personal_fact", "importance": 1.0, "source": "tool:store_memory"}
+            )
             return f"Stored: {text}"
         return "Memory component not available."
 
@@ -201,7 +204,10 @@ def register_tools(dispatcher, components: Dict[str, Any]):
 
         # Dispatch based on intent
         if effective_intent in ["store", "save", "remind", "remember", "memorize"]:
-             memory.store(f"Stored fact: {text}", memory_type="episodic", importance=1.0)
+             memory.remember(
+                 text=f"Stored fact: {text}",
+                 metadata={"type": "personal_fact", "importance": 1.0, "source": "tool:handle_memory_ops"}
+             )
              return f"Stored: {text}"
         elif effective_intent in ["search", "recall", "find", "lookup"]:
              results = memory.retrieve(text, k=3)

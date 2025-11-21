@@ -73,7 +73,7 @@ class Router:
 
         # === 2. Semantic routing with bulletproof JSON parsing ===
         # Use retrieve() instead of search_similar (new API)
-        recall = self.memory.retrieve(text)
+        recall = self.memory.retrieve(text)[:1] if self.memory else []
         recall_hint = f"\nRelevant memory: {recall[0]['text']}" if recall else "\nNo relevant memory."
 
         modules_json = json.dumps(self.module_registry, indent=2)

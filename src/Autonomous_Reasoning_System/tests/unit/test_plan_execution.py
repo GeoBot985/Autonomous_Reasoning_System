@@ -110,16 +110,16 @@ class TestPlanExecution(unittest.TestCase):
         result = self.plan_executor.execute_next_step(self.plan_id)
 
         # Verify
-        self.assertEqual(result["status"], "suspended")
+        self.assertEqual(result["status"], "failed")
         self.assertEqual(result["failed_step"], "Step 1")
 
         # Verify retry count (retry_limit=2 -> 3 attempts total)
         self.assertEqual(self.mock_router.route.call_count, 3)
 
         # Verify plan status update
-        self.mock_plan_builder.update_step.assert_called_with(self.plan_id, "s1", "suspended", result=unittest.mock.ANY)
-        # Verify plan object status set to suspended
-        self.assertEqual(self.plan.status, "suspended")
+        self.mock_plan_builder.update_step.assert_called_with(self.plan_id, "s1", "failed", result=unittest.mock.ANY)
+        # Verify plan object status set to failed
+        self.assertEqual(self.plan.status, "failed")
 
     def test_execute_next_step_complete_plan(self):
         """Test that finishing the last step marks the plan as complete."""

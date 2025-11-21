@@ -52,6 +52,9 @@ class ContextAdapter:
                                     if line.strip():
                                         self.history.append(line.strip())
 
+                            # Keep only the most recent 20 lines to avoid token bloat on restart
+                            self.history = self.history[-20:]
+
                             print(f"[ContextAdapter] Restored {len(self.history)} lines of conversation history.")
             except Exception as e:
                 print(f"[ContextAdapter] Error loading history: {e}")

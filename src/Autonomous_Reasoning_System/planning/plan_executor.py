@@ -8,6 +8,7 @@ Handles state tracking, errors, and retries.
 """
 import logging
 import time
+from datetime import datetime
 from typing import Optional, Dict, Any
 
 from Autonomous_Reasoning_System.control.dispatcher import Dispatcher
@@ -20,10 +21,12 @@ class PlanExecutor:
     """
     Executes a multi-step plan.
     """
-    def __init__(self, plan_builder: PlanBuilder, dispatcher: Dispatcher, router: Optional[Router] = None):
+    def __init__(self, plan_builder: PlanBuilder, dispatcher: Dispatcher, router: Optional[Router] = None, memory_interface=None):
         self.plan_builder = plan_builder
         self.dispatcher = dispatcher
         self.router = router or Router(dispatcher)
+        # Prefer explicit memory injection; fall back to PlanBuilder's storage if present
+        self.memory = memory_interface or getattr(plan_builder, "memory", None)
         self.retry_limit = 2
 
     def execute_plan(self, plan_id: str) -> Dict[str, Any]:
@@ -129,17 +132,28 @@ class PlanExecutor:
                     "step_completed": step.description
                 }
         else:
-            # Suspend plan
-            self.plan_builder.update_step(plan.id, step.id, "suspended", result=f"Suspended after failure: {result.get('errors')}")
-            logger.error(f"Step failed after {attempts} attempts: {step.description}. Errors: {result.get('errors')}. Suspending plan.")
-            plan.status = "suspended"
+            # Mark plan and goal as failed after exhausting retries
+            self.plan_builder.update_step(plan.id, step.id, "failed", result=f"Failed after retries: {result.get('errors')}")
+            plan.status = "failed"
+
+            if self.memory and plan.goal_id:
+                try:
+                    # Update goal status to avoid orphaned goals
+                    self.memory.update_goal(plan.goal_id, {
+                        "status": "failed",
+                        "updated_at": datetime.utcnow().isoformat()
+                    })
+                except Exception as e:
+                    logger.error(f"Failed to update goal {plan.goal_id} status: {e}")
+
+            logger.error(f"Step failed after {attempts} attempts: {step.description}. Errors: {result.get('errors')}. Marking plan/goal as failed.")
 
             return {
-                "status": "suspended",
+                "status": "failed",
                 "plan_id": plan_id,
                 "failed_step": step.description,
                 "errors": result.get("errors"),
-                "message": f"I got stuck on step '{step.description}'. Error: {result.get('errors')}. Please provide guidance or modify the plan."
+                "message": f"I got stuck on step '{step.description}'. Error: {result.get('errors')}. Plan is marked as failed."
             }
 
     def _execute_step(self, step: Step, plan: Plan) -> Dict[str, Any]:

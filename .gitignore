@@ -31,3 +31,4 @@ src/data/episodes.parquet
 *.duckdb
 *.parquet
 *.faiss
+src/data/memory.duckdb.wal

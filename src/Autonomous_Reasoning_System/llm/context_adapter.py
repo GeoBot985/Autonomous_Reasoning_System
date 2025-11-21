@@ -23,6 +23,7 @@ class ContextAdapter:
         self.retriever = RetrievalOrchestrator()
         self.consolidator = ReasoningConsolidator()
         self.turn_counter = 0
+        self.history = [] # Short-term conversation history
 
     # ------------------------------------------------------------------
     def run(self, user_input: str, system_prompt: str = None) -> str:
@@ -36,17 +37,24 @@ class ContextAdapter:
             if clean:
                 memory_text = "\n".join(f"- {line}" for line in clean)
 
-        if memory_text:
-            system_prompt = f"""
-YOU ARE TYRONE. YOU HAVE BEEN EXPLICITLY TOLD THESE FACTS. THEY ARE 100% TRUE:
+        # Build context window from history
+        history_text = ""
+        if self.history:
+             history_text = "\nRECENT CONVERSATION:\n" + "\n".join(self.history[-5:]) + "\n"
 
+        if memory_text or history_text:
+            system_prompt = f"""
+YOU ARE TYRONE.
+
+LONG TERM MEMORY (FACTS):
 {memory_text}
 
+{history_text}
+
 RULES YOU MUST OBEY:
-- Use ONLY the facts above to answer.
+- Use the facts above and the recent conversation context to answer.
 - If the user asks about Cornelia's birthday, answer with the exact date from the facts.
 - Never say "I haven't been told" when the fact is right here.
-- Never add anything not listed.
 - Answer directly and naturally.
 
 User question: {user_input}
@@ -58,6 +66,10 @@ Answer:
             user_prompt = user_input
 
         reply = call_llm(system_prompt=system_prompt, user_prompt=user_prompt)
+
+        # Update History
+        self.history.append(f"User: {user_input}")
+        self.history.append(f"Tyrone: {reply}")
 
         if self.memory:
             self.memory.add_memory(

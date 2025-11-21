@@ -73,7 +73,7 @@ class CoreLoop:
 
         # 5. Start Background Tasks
         start_heartbeat_with_plans(
-            self.learner, self.confidence, self.plan_builder, interval_seconds=10, test_mode=True
+            self.learner, self.confidence, self.plan_builder, interval_seconds=10, test_mode=True, plan_executor=self.plan_executor
         )
         self.running = False
 
@@ -183,6 +183,8 @@ class CoreLoop:
                  print(f"[REFLECTION] {reflection_data}")
                  # Store reflection
                  self.memory.store(str(reflection_data), memory_type="reflection", importance=0.3)
+                 # Reinforce confidence
+                 self.confidence.reinforce()
 
         duration = time.time() - start_time
         return {

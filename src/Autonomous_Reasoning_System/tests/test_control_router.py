@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, ANY
-from Autonomous_Reasoning_System.control.router import Router
+from Autonomous_Reasoning_System.control.router import Router, IntentFamily
 
 class TestControlRouter:
 
@@ -10,6 +10,8 @@ class TestControlRouter:
 
     @pytest.fixture
     def router(self, dispatcher):
+        # We need to mock Router internal maps or pass mocks?
+        # No, we test the Router class logic.
         return Router(dispatcher)
 
     def test_route_unknown_intent_fallback(self, router, dispatcher):
@@ -66,7 +68,8 @@ class TestControlRouter:
         def dispatch_side_effect(tool_name, arguments=None, **kwargs):
             if tool_name == "analyze_intent":
                 return {"status": "success", "data": {"intent": "remember", "entities": {}}}
-            elif tool_name == "store_memory":
+            # Router now maps 'remember' to 'handle_memory_ops'
+            elif tool_name == "handle_memory_ops":
                 return {"status": "success", "data": "Memory stored."}
             return {"status": "error", "errors": ["Unknown tool"]}
 
@@ -77,13 +80,18 @@ class TestControlRouter:
 
         # Verify
         assert result["intent"] == "remember"
-        assert result["pipeline"] == ["store_memory"]
+        assert result["pipeline"] == ["handle_memory_ops"]
+        # Check that intent is passed in context or arguments
+        # The Router.execute_pipeline passes context which contains intent
+        args, kwargs = dispatcher.dispatch.call_args
+        assert args[0] == "handle_memory_ops"
+        assert kwargs['arguments']['context']['intent'] == "remember"
 
     def test_pipeline_execution_failure(self, router, dispatcher):
         def dispatch_side_effect(tool_name, arguments=None, **kwargs):
             if tool_name == "analyze_intent":
                 return {"status": "success", "data": {"intent": "search", "entities": {}}}
-            elif tool_name == "search_memory":
+            elif tool_name == "handle_memory_ops":
                 return {"status": "error", "errors": ["Search failed"]}
             return {"status": "error", "errors": ["Unknown tool"]}
 
@@ -156,8 +164,11 @@ class TestControlRouter:
 
         dispatcher.dispatch.side_effect = dispatch_side_effect
 
-        # Manually inject pipeline for testing chaining
-        router.intent_pipeline_map["test_chain"] = ["step_1", "step_2"]
+        # Use family mapping to inject pipeline
+        # We need to register a temporary family or hijack an existing one
+        # 'test_chain' is not in IntentFamily enum, but intent_family_map is a dict
+        router.intent_family_map["test_chain"] = "test_family"
+        router.family_pipeline_map["test_family"] = ["step_1", "step_2"]
 
         result = router.route("Original Input")
 

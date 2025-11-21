@@ -34,3 +34,4 @@ src/data/episodes.parquet
 src/data/memory.duckdb.wal
 data/memory.duckdb.wal
 src/data/memory.duckdb
+src/data/memory.duckdb

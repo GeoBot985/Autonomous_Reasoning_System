@@ -20,8 +20,9 @@ class Router:
     Router determines the sequence of tools (pipeline) to execute based on user input.
     Now organized by Intent Families.
     """
-    def __init__(self, dispatcher: Dispatcher):
+    def __init__(self, dispatcher: Dispatcher, memory_interface=None):
         self.dispatcher = dispatcher
+        self.memory = memory_interface
 
         # 1. Map Intents to Families
         self.intent_family_map = {

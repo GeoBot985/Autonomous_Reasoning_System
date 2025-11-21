@@ -26,3 +26,8 @@ Thumbs.db
 *.tmp
 src/Autonomous_Reasoning_System/consolidated_app.py
 src/data/episodes.parquet
+
+# Database/vector store artifacts
+*.duckdb
+*.parquet
+*.faiss

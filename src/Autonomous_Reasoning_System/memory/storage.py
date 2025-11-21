@@ -25,7 +25,7 @@ class MemoryStorage:
 
         # Initialize persistent connection
         self.con = duckdb.connect(self.db_path)
-        self.lock = threading.Lock()
+        self._lock = threading.Lock()
 
         # Initialize Schema
         self.init_db()
@@ -45,7 +45,7 @@ class MemoryStorage:
 
     def init_db(self):
         """Create tables if they don't exist."""
-        with self.lock:
+        with self._lock:
             self.con.execute("""
                 CREATE TABLE IF NOT EXISTS memory (
                     id VARCHAR PRIMARY KEY,
@@ -92,7 +92,7 @@ class MemoryStorage:
         now_str = datetime.utcnow().isoformat()
         # sched_str handled via param query or manual string if using execute params
 
-        with self.lock:
+        with self._lock:
             self.con.execute("""
                 INSERT INTO memory (
                     id, text, memory_type, created_at, last_accessed,
@@ -118,7 +118,7 @@ class MemoryStorage:
     # ------------------------------------------------------------------
     def get_all_memories(self) -> pd.DataFrame:
         try:
-            with self.lock:
+            with self._lock:
                 return self.con.execute("SELECT * FROM memory").df()
         except Exception as e:
             print(f"[MemoryStorage] Error reading memories: {e}")
@@ -130,7 +130,7 @@ class MemoryStorage:
             return pd.DataFrame()
         # Use param to prevent SQL injection, though search pattern needs concat
         escaped_query = f"%{query_text}%"
-        with self.lock:
+        with self._lock:
             return self.con.execute("""
                 SELECT * FROM memory
                 WHERE text ILIKE ?
@@ -141,7 +141,7 @@ class MemoryStorage:
         """Keyword-based search fallback."""
         try:
             escaped_query = f"%{query}%"
-            with self.lock:
+            with self._lock:
                 res = self.con.execute("""
                     SELECT text FROM memory
                     WHERE text ILIKE ?
@@ -157,7 +157,7 @@ class MemoryStorage:
     # ------------------------------------------------------------------
     def delete_memory(self, phrase: str):
         escaped = f"%{phrase}%"
-        with self.lock:
+        with self._lock:
             self.con.execute("DELETE FROM memory WHERE text ILIKE ?", (escaped,))
         return True
 
@@ -183,7 +183,7 @@ class MemoryStorage:
              # The schema has 'status'. We assume 'pending' or NULL is active.
              # But add_memory sets status to None.
 
-             with self.lock:
+             with self._lock:
                  return self.con.execute("""
                     SELECT * FROM memory
                     WHERE memory_type IN ('task', 'reminder')
@@ -205,7 +205,7 @@ class MemoryStorage:
             return False
 
         # Check if ID exists first
-        with self.lock:
+        with self._lock:
             try:
                 exists = self.con.execute("SELECT count(*) FROM memory WHERE id=?", (uid,)).fetchone()[0]
             except Exception as e:
@@ -231,7 +231,7 @@ class MemoryStorage:
     # ------------------------------------------------------------------
     def add_goal(self, goal_data: dict):
         """Insert goal into DuckDB."""
-        with self.lock:
+        with self._lock:
             self.con.execute("""
                 INSERT INTO goals (
                     id, text, priority, status, steps, metadata, plan_id, created_at, updated_at
@@ -251,7 +251,7 @@ class MemoryStorage:
 
     def get_goal(self, goal_id: str) -> dict:
         try:
-            with self.lock:
+            with self._lock:
                 res = self.con.execute("SELECT * FROM goals WHERE id=?", (goal_id,)).df()
             if not res.empty:
                 return res.iloc[0].to_dict()
@@ -261,7 +261,7 @@ class MemoryStorage:
 
     def get_all_goals(self) -> pd.DataFrame:
         try:
-            with self.lock:
+            with self._lock:
                 return self.con.execute("SELECT * FROM goals").df()
         except Exception as e:
             print(f"[MemoryStorage] Error reading goals: {e}")
@@ -269,7 +269,7 @@ class MemoryStorage:
 
     def get_active_goals(self) -> pd.DataFrame:
         try:
-            with self.lock:
+            with self._lock:
                 return self.con.execute("SELECT * FROM goals WHERE status IN ('pending', 'active')").df()
         except Exception as e:
             print(f"[MemoryStorage] Error reading active goals: {e}")
@@ -288,7 +288,7 @@ class MemoryStorage:
         values.append(goal_id)
         set_query = ", ".join(set_clauses)
         try:
-            with self.lock:
+            with self._lock:
                 self.con.execute(f"UPDATE goals SET {set_query} WHERE id=?", tuple(values))
             return True
         except Exception as e:
@@ -297,7 +297,7 @@ class MemoryStorage:
 
     def delete_goal(self, goal_id: str):
         try:
-            with self.lock:
+            with self._lock:
                 self.con.execute("DELETE FROM goals WHERE id=?", (goal_id,))
             return True
         except Exception as e:

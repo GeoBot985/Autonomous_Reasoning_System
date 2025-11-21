@@ -61,12 +61,12 @@ class EpisodicMemory:
         self.active_episode_id = str(uuid4())
         now = datetime.utcnow().isoformat()
 
-        self.con.execute(f"""
+        self.con.execute("""
             INSERT INTO episodes (
                 episode_id, start_time, end_time, summary, importance, vector
             )
-            VALUES ('{self.active_episode_id}', '{now}', NULL, NULL, 0.5, NULL);
-        """)
+            VALUES (?, ?, NULL, NULL, 0.5, NULL);
+        """, (self.active_episode_id, now))
 
         print(f"🎬 Started new episode: {self.active_episode_id}")
         return self.active_episode_id
@@ -80,15 +80,14 @@ class EpisodicMemory:
 
         end_time = datetime.utcnow().isoformat()
         vec = self.embedder.embed(summary_text).tobytes()
-        escaped_summary = summary_text.replace("'", "''")
 
-        self.con.execute(f"""
+        self.con.execute("""
             UPDATE episodes
-            SET end_time = '{end_time}',
-                summary = '{escaped_summary}',
-                vector = '{vec.hex()}'
-            WHERE episode_id = '{self.active_episode_id}';
-        """)
+            SET end_time = ?,
+                summary = ?,
+                vector = ?
+            WHERE episode_id = ?;
+        """, (end_time, summary_text, vec, self.active_episode_id))
 
         print(f"🏁 Ended episode {self.active_episode_id}")
         self.active_episode_id = None
@@ -100,10 +99,10 @@ class EpisodicMemory:
         """
         today = datetime.utcnow().date()
         try:
-            df = self.con.execute(f"""
+            df = self.con.execute("""
                 SELECT * FROM episodes
-                WHERE start_time::DATE = '{today}'
-            """).df()
+                WHERE start_time::DATE = ?
+            """, (str(today),)).df()
         except Exception:
              return None
 

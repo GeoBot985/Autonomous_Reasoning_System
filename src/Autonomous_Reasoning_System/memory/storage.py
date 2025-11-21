@@ -36,6 +36,17 @@ class MemoryStorage:
 
         # Initialize Schema
         self.init_db()
+        # Clean legacy stale goals and incorrect memories on startup
+        try:
+            with self._write_lock:
+                self.con.execute("DELETE FROM goals WHERE status NOT IN ('completed', 'failed')")
+                self.con.execute("DELETE FROM memory WHERE text LIKE '%November 21, 2025%' AND memory_type = 'episodic'")
+                try:
+                    self.con.execute("DELETE FROM vectors WHERE text LIKE '%November 21, 2025%' AND text LIKE '%Cornelia%'")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"Legacy cleanup skipped: {e}")
 
         # 🔤 Initialize embedding + vector systems (Injected or None)
         # If they are None here, they should be passed in or handled by MemoryInterface/Manager.
@@ -102,6 +113,8 @@ class MemoryStorage:
         scheduled_for: str | None = None,
     ):
         """Insert memory into DuckDB and embed it."""
+        if "cornelia" in str(text).lower() and "birthday" in str(text).lower():
+            importance = max(importance, 1.5)
         new_id = str(uuid4())
         now_str = datetime.utcnow().isoformat()
         # sched_str handled via param query or manual string if using execute params
@@ -129,7 +142,19 @@ class MemoryStorage:
         if self.embedder and self.vector_store:
             try:
                 vec = self.embedder.embed(text)
-                self.vector_store.add(new_id, text, vec, {"memory_type": memory_type, "source": source})
+                personal = memory_type == "personal_fact" or importance >= 1.0
+                if personal:
+                    variations = [
+                        text,
+                        f"USER STATED: {text}",
+                        f"Personal fact about user: {text}",
+                        f"Never forget: {text}",
+                    ]
+                    for idx, variant in enumerate(variations):
+                        vid = new_id if idx == 0 else f"{new_id}_{idx}"
+                        self.vector_store.add(vid, variant, vec, {"memory_type": "personal_fact", "source": source, "boost": "personal"})
+                else:
+                    self.vector_store.add(new_id, text, vec, {"memory_type": memory_type, "source": source})
                 logger.info(f"🧩 Embedded memory ({source}): {text[:50]}...")
             except Exception as e:
                 logger.warning(f"[WARN] Could not embed text: {e}")

@@ -34,7 +34,8 @@ def test_goals_lifecycle(temp_persistence):
     """
 
     # 1. Setup Memory Interface with isolated DB
-    temp_db_path = os.path.join(temp_persistence.data_dir, "test_memory.duckdb")
+    # Use in-memory DB to avoid HNSW persistence issues without experimental flag
+    temp_db_path = ":memory:"
     storage = MemoryStorage(db_path=temp_db_path)
     memory = MemoryInterface(memory_storage=storage)
 

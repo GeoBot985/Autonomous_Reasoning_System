@@ -5,18 +5,16 @@ import os
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pandas as pd
+import sys
+
+# Patch the missing 'ocr' module globally before any other imports
+mock_ocr = MagicMock()
+sys.modules["Autonomous_Reasoning_System.tools.ocr"] = mock_ocr
 
 @pytest.fixture(scope="function")
 def temp_db_path():
-    # Create a temporary directory
-    temp_dir = tempfile.mkdtemp()
-    db_path = os.path.join(temp_dir, "test_memory.duckdb")
-    yield db_path
-    # Cleanup
-    try:
-        shutil.rmtree(temp_dir)
-    except Exception:
-        pass
+    # Use in-memory database to support HNSW index without experimental persistence flag
+    return ":memory:"
 
 @pytest.fixture(scope="function")
 def mock_embedding_model():

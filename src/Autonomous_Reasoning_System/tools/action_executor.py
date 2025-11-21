@@ -7,7 +7,6 @@ Given a step description, it resolves an appropriate tool and executes it.
 """
 
 from Autonomous_Reasoning_System.memory.storage import MemoryStorage
-from Autonomous_Reasoning_System.tools import ocr  # example tool module
 
 
 class ActionExecutor:
@@ -26,12 +25,15 @@ class ActionExecutor:
 
         try:
             if "ocr" in text or "extract text" in text:
-                # Example: use OCR module (placeholder)
-                image_path = workspace.get("image_path", "data/sample_image.jpg")
-                extracted = ocr.run(image_path)
-                workspace.set("extracted_text", extracted)
-                result_text = f"OCR extracted text of length {len(extracted)}"
-                success = True
+                try:
+                    from Autonomous_Reasoning_System.tools import ocr  # optional dependency
+                    image_path = workspace.get("image_path", "data/sample_image.jpg")
+                    extracted = ocr.run(image_path)
+                    workspace.set("extracted_text", extracted)
+                    result_text = f"OCR extracted text of length {len(extracted)}"
+                    success = True
+                except Exception as e:
+                    result_text = f"OCR tool unavailable: {e}"
 
             elif "load image" in text:
                 # Placeholder for an image load step
@@ -56,7 +58,7 @@ class ActionExecutor:
 
         # Log the attempt
         self.memory.add_memory(
-            text=f"Action executed: '{step_description}' → {result_text}",
+            text=f"Action executed: '{step_description}' -> {result_text}",
             memory_type="action_log",
             importance=0.3,
             source="ActionExecutor",

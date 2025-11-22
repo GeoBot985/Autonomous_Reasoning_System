@@ -9,6 +9,7 @@ from Autonomous_Reasoning_System.memory.events import MemoryCreatedEvent
 from Autonomous_Reasoning_System.memory.kg_builder import KGBuilder
 from Autonomous_Reasoning_System.infrastructure.concurrency import memory_write_lock
 from Autonomous_Reasoning_System.infrastructure.observability import Metrics
+from Autonomous_Reasoning_System.memory.sanitizer import MemorySanitizer
 import numpy as np
 from datetime import datetime
 
@@ -79,19 +80,25 @@ class MemoryInterface:
         Add a memory to the system (Unified replacement for store).
         Automatically triggers a save.
         """
+        # Sanitize
+        sanitized_text = MemorySanitizer.sanitize(text)
+        if not sanitized_text:
+            print(f"🧹 Sanitized/Skipped memory: '{text[:50]}...'")
+            return None
+
         Metrics().increment("memory_ops_write")
         metadata = metadata or {}
         memory_type = metadata.get("type", "note")
         importance = metadata.get("importance", 0.5)
         source = metadata.get("source", "unknown")
 
-        uid = self.storage.add_memory(text, memory_type, importance, source)
+        uid = self.storage.add_memory(sanitized_text, memory_type, importance, source)
         if self.episodes.active_episode_id:
             print(f"🧠 Added memory linked to active episode {self.episodes.active_episode_id}")
 
         # Emit event
         event = MemoryCreatedEvent(
-            text=text,
+            text=sanitized_text,
             timestamp=datetime.utcnow().isoformat(),
             source=source,
             memory_id=uid,

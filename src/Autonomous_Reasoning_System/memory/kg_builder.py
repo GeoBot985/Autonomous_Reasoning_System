@@ -42,6 +42,11 @@ class KGBuilder:
                 logger.error(f"Error in KGBuilder worker: {e}")
 
     def _process_event(self, event: MemoryCreatedEvent):
+        # 0. Sanitize / Validate Source
+        if not self.validator.is_valid_content(event.text):
+            logger.info(f"KGBuilder: Skipping noise memory {event.memory_id}")
+            return
+
         logger.info(f"Processing memory for KG: {event.memory_id}")
         try:
             # 1. Extract candidates via LLM
@@ -64,9 +69,13 @@ class KGBuilder:
         prompt = f"""
         Extract knowledge graph triples from the following text.
         Format each triple as: Subject | SubjectType | Relation | Object | ObjectType
-        Only extract factual, stable relationships.
-        Ignore opinions or temporary states.
-        Use simple types like: person, location, object, concept, event.
+
+        RULES:
+        1. Only extract factual, stable relationships.
+        2. Ignore opinions, temporary states, plan updates, or reflections.
+        3. Use simple types: person, location, object, concept, event, date.
+        4. IMPORTANT: If the text contains a birthday, extract it as: Person | person | has_birthday | Date | date
+           Example: "Nina's birthday is 11 January" -> Nina | person | has_birthday | 11 January | date
 
         Text: "{text}"
 

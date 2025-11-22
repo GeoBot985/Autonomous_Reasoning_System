@@ -1,5 +1,6 @@
 import re
 from typing import List, Tuple, Set
+from Autonomous_Reasoning_System.memory.sanitizer import MemorySanitizer
 
 class KGValidator:
     """
@@ -17,8 +18,13 @@ class KGValidator:
             "owns": {("person", "object"), ("person", "device")},
             "knows": {("person", "person")},
             "located_in": {("person", "location"), ("object", "location"), ("device", "location")},
-            "is_a": {("object", "concept"), ("device", "concept"), ("person", "concept")}
+            "is_a": {("object", "concept"), ("device", "concept"), ("person", "concept")},
+            "has_birthday": {("person", "date"), ("person", "unknown"), ("unknown", "date"), ("unknown", "unknown")}
         }
+
+    def is_valid_content(self, text: str) -> bool:
+        """Check if text is valid source for KG."""
+        return MemorySanitizer.is_valid_for_kg(text)
 
     def validate_triple(self, subject: str, relation: str, object_: str, subject_type: str = None, object_type: str = None) -> bool:
         """
@@ -60,6 +66,16 @@ class KGValidator:
                     # Let's print warning and return False
                     # Or maybe we just return False
                     return False
+            else:
+                # If relation is not in valid_relations map, do we reject?
+                # The user said "Add KG validation rules". If I restrict only to this set, I might miss things.
+                # But "Strict semantic gatekeeper" implies whitelist.
+                # I'll assume unknown relations are rejected unless added.
+                # But for now, I'll allow 'has_birthday' and keep strictness.
+                # If relation is not known, maybe we should reject it?
+                # "Right now it’s never being called."
+                # I'll reject unknown relations to be safe/strict.
+                return False
 
         return True
 

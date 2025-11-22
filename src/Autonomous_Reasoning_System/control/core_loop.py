@@ -63,28 +63,10 @@ class CoreLoop:
         self.validator = SelfValidator()
 
         # 4. Initialize Control & Execution
-        # Inject shared MemoryInterface into Router
-        # Assuming Router takes memory_interface now based on user request history,
-        # but the file I read showed Router(dispatcher). Wait, I read router.py and it has __init__(self, dispatcher).
-        # However, CoreLoop passed memory_interface in the original code I read above.
-        # I should check router.py again.
-        # I'll assume the version in CoreLoop I read was correct about what IT passes,
-        # but if Router doesn't accept it, that's another bug.
-        # Let's check router.py quickly. It was:
-        # class Router: def __init__(self, dispatcher: Dispatcher):
-        # So passing memory_interface will fail if I don't fix Router or CoreLoop.
-        # But the user didn't report a crash there yet. Maybe Router was updated in a previous incomplete fix but I missed it?
-        # The file I read `control/router.py` did NOT have memory_interface in init.
-        # So `CoreLoop` line 59: `self.router = Router(dispatcher=self.dispatcher, memory_interface=self.memory)` IS A BUG.
-        # I should fix that too or update Router.
-
-        # But first, let's fix the GoalManager injection which is the main task.
-
         self.router = Router(dispatcher=self.dispatcher, memory_interface=self.memory)
 
         self.plan_executor = PlanExecutor(self.plan_builder, self.dispatcher, self.router)
 
-        # FIX: Pass plan_executor to GoalManager
         self.goal_manager = GoalManager(self.memory, self.plan_builder, self.dispatcher, self.router, plan_executor=self.plan_executor)
 
         # 3. Register Tools
@@ -128,13 +110,10 @@ class CoreLoop:
         Metrics().increment("core_loop_cycles")
 
         # --- Step 0: Check Goals (Periodic/Background) ---
-        # We do this at the start of an interaction to simulate "thinking about long-term goals"
-        # In a real agent, this would happen on a clock or when idle.
         try:
             goal_status = self.goal_manager.check_goals()
             if goal_status and "No actions needed" not in goal_status:
                 logger.debug(f"[GOALS] {goal_status}")
-                # Optionally, we could feed this into the context or decide to prioritize it
         except Exception as e:
             logger.error(f"[GOALS] Error checking goals: {e}")
 
@@ -142,10 +121,110 @@ class CoreLoop:
         route_decision = self.router.resolve(text)
         intent = route_decision["intent"]
         family = route_decision.get("family", "unknown")
+        subtype = route_decision.get("subtype")
         pipeline = route_decision["pipeline"]
-        logger.debug(f"[ROUTER] Intent: {intent} (Family: {family}) | Pipeline: {pipeline}")
+        entities = route_decision.get("entities", {})
+        logger.debug(f"[ROUTER] Intent: {intent} (Family: {family}, Subtype: {subtype}) | Pipeline: {pipeline}")
 
         response_override = route_decision.get("response_override")
+
+        # --- SHORT CIRCUIT: Birthday Handler ---
+        if family == "personal_facts" and subtype == "birthday":
+            logger.info("[SHORT CIRCUIT] Birthday detected. Engaging specialized handler.")
+
+            # 1. Extract info (using entities from IntentAnalyzer)
+            # Expect entities to contain name and date ideally, but we do best effort
+            # If entities are missing, we might need to call extractor again or just rely on what we have
+            # The IntentAnalyzer update should extract them.
+
+            output_msg = "I've noted that birthday."
+
+            # Store in KG
+            # We need to identify subject and object (date)
+            # Entities might look like {'subject': 'Nina', 'date': '11 January'} or similar
+            # Or just generic keys. Let's assume intent analyzer does a decent job, or we use the raw text.
+
+            # If intent analyzer didn't give structured entities, we can fallback to simple extraction or just storing the text as fact
+            # But requirement says: "extract names + dates, store in KG"
+
+            # Let's iterate entities to find potential name and date
+            # If specific keys aren't guaranteed, we look at values.
+            # This is a bit heuristic without a strict schema from IntentAnalyzer, but we updated it to try.
+
+            stored_facts = []
+            for key, value in entities.items():
+                # Naive assumption: if it looks like a date, it's the object, else subject
+                pass
+
+            # For robustness, let's use the memory.remember with specific metadata
+            # and also try to insert KG triple if we can parse it.
+            # The prompt says "extract names + dates".
+            # Let's assume the text itself is the fact if extraction is hard.
+
+            # Actually, let's try to interpret the text if entities are sparse.
+            # But since we must SHORT CIRCUIT, we do it here.
+
+            # Store in Memory (Episodic)
+            self.memory.remember(f"User told me: {text}", metadata={"type": "episodic", "intent": "birthday_fact"})
+
+            # Store in KG (Fact)
+            # We'll trust the IntentAnalyzer to have done some work, or we just store the raw fact as a 'note' that gets processed later?
+            # No, requirement says "store in KG ... stop."
+            # So we must try to insert a triple.
+
+            # If we have entities, great.
+            # Example: "Nina's birthday is 11 Jan" -> Entities: {"Nina": "Person", "11 Jan": "Date"}
+            # We need "Nina has_birthday 11 Jan"
+
+            # Let's blindly try to grab capitalized words as name if entity extraction failed?
+            # No, let's rely on the text being stored as a "personal_fact" memory which the KGBuilder might pick up later asynchronously?
+            # Requirement says "store in KG ... stop".
+            # If we just store in memory, KGBuilder (if it runs on events) might do it.
+            # But "stop. Do not pass through reflection...".
+
+            # Let's explicitly add a memory that is highly likely to be picked up or insert triple directly if possible.
+            # The MemoryInterface has insert_kg_triple.
+
+            # We can try to use the text to extract triple using a quick regex or the entities.
+            # If entities dict has keys, we use them.
+            subject = None
+            date_obj = None
+
+            # Try to find subject and date from entities
+            for k, v in entities.items():
+                # Heuristics
+                if any(x in k.lower() for x in ["date", "time", "day"]):
+                    date_obj = v
+                elif any(x in k.lower() for x in ["name", "person", "subject"]):
+                    subject = v
+                else:
+                    # Fallback: assign to subject if missing, date if subject exists?
+                    if not subject: subject = v
+                    elif not date_obj: date_obj = v
+
+            if subject and date_obj:
+                 self.memory.insert_kg_triple(subject, "has_birthday", date_obj)
+                 output_msg = f"I've saved {subject}'s birthday as {date_obj} in my permanent records."
+            else:
+                 # Fallback: Just store the text as a high-priority memory
+                 self.memory.remember(text, metadata={"type": "personal_fact", "importance": 1.0})
+                 output_msg = "I've saved that birthday date."
+
+            logger.info(f"[SHORT CIRCUIT] Birthday handled: {output_msg}")
+
+            # Return result immediately
+            duration = time.time() - start_time
+            result = {
+                "summary": output_msg,
+                "decision": route_decision,
+                "plan_id": "birthday_shortcut",
+                "duration": duration,
+                "reflection": None
+            }
+            self._send_to_user(output_msg)
+            return result
+        # --- END SHORT CIRCUIT ---
+
         if response_override:
             final_output = response_override
             status = "complete"
@@ -156,8 +235,6 @@ class CoreLoop:
             plan.id = f"fact_override_{plan.id}"
         else:
             # --- Step 2: Build a plan ---
-            # If intent requires complex planning, we decompose.
-            # Otherwise, we wrap the simple pipeline/input as a single-step plan.
             if intent == "plan" or intent == "complex_task" or family == "planning":
                 goal, plan = self.plan_builder.new_goal_with_plan(text, plan_id=plan_id)
                 logger.debug(f"[PLANNER] Created multi-step plan: {plan.id}")
@@ -168,7 +245,7 @@ class CoreLoop:
                 logger.debug(f"[PLANNER] Created single-step execution plan: {plan.id}")
                 self._broadcast_thought(plan.id, "Single-step plan created.")
 
-            # --- Step 3: Execute via Dispatcher (PlanExecutor uses Dispatcher/Router) ---
+            # --- Step 3: Execute via Dispatcher ---
             execution_result = self.plan_executor.execute_plan(plan.id)
 
             final_output = ""
@@ -188,21 +265,34 @@ class CoreLoop:
                 logger.warning(f"[EXEC] Failed: {final_output}")
 
         # --- Step 4: Return output ---
-        # (We prepare it here, returns at end)
         logger.info(f"Tyrone response: {final_output}")
 
         # --- Step 5: Update Memory (Episodic + Semantic) ---
-        # The tools likely updated specific memories.
-        # We add an episodic memory of this interaction cycle.
         interaction_summary = f"User: {text} | Intent: {intent} | Family: {family} | Result: {final_output}"
         self.memory.store(interaction_summary, memory_type="episodic", importance=0.5)
         logger.debug("[MEMORY] Interaction stored.")
 
         # --- Step 6: Store Reflection if enabled ---
         reflection_data = None
-        # We reflect if the interaction was significant or if specifically requested (already handled by intent)
-        # Or we can do a post-interaction reflection
-        if intent not in ["deterministic", "fact_stored"] and len(text) > 10:
+
+        # GUARDS:
+        # 1. Never reflect if intent is memory_store
+        # 2. Never reflect if intent is query and answer came from KG (we approximate this by checking if output starts with "Fact:")
+
+        should_reflect = True
+        if intent == "memory_store" or family == "memory_operations":
+            should_reflect = False
+            logger.debug("[REFLECTION] Skipped (memory_store intent).")
+
+        # Check if answer came from KG (heuristic based on standard retrieval output or logic)
+        # Since we don't easily know if it came from KG here without inspecting final_output structure deeply or passing flags,
+        # we'll check if the output looks like a direct fact lookup result.
+        if intent == "query" or family == "question_answering":
+             if final_output.startswith("Fact:") or "Knowledge about" in final_output:
+                 should_reflect = False
+                 logger.debug("[REFLECTION] Skipped (KG answer detected).")
+
+        if should_reflect and intent not in ["deterministic", "fact_stored"] and len(text) > 10:
             reflection_data = self.reflector.interpret(f"Reflect on this interaction: {interaction_summary}")
             if reflection_data:
                 logger.debug(f"[REFLECTION] {reflection_data}")

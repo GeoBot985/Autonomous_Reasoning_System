@@ -9,6 +9,16 @@ class ConfidenceManager:
     def __init__(self, memory_storage=None):
         self.memory = memory_storage or MemoryStorage()
 
+    def _is_plan_artifact(self, text: str) -> bool:
+        """Check if text looks like a plan or reflection about plans."""
+        lower = text.lower()
+        if "plan" in lower or "goal" in lower:
+            if "step" in lower or "execute" in lower or "created" in lower:
+                return True
+        if "intent" in lower and "family" in lower:
+            return True
+        return False
+
     def reinforce(self, mem_id: str = None, step: float = 0.05):
         """
         Increase importance slightly when memory is accessed.
@@ -18,9 +28,16 @@ class ConfidenceManager:
         if mem_id is None:
             try:
                 res = self.memory.con.execute(
-                    "SELECT id FROM memory ORDER BY created_at DESC LIMIT 1"
+                    "SELECT id, text, memory_type FROM memory ORDER BY created_at DESC LIMIT 1"
                 ).fetchone()
-                mem_id = res[0] if res else None
+                if res:
+                    mem_id, text, mtype = res
+                    # GUARD: Do not reinforce plans or reflections about plans
+                    if self._is_plan_artifact(text) or mtype == "plan":
+                        print(f"[ConfidenceManager] Skipped reinforcing plan artifact: {mem_id}")
+                        return
+                else:
+                    mem_id = None
             except Exception as e:
                 print(f"[ConfidenceManager] Error finding latest memory: {e}")
                 mem_id = None

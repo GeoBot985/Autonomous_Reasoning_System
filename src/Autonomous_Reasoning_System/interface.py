@@ -1,3 +1,5 @@
+print("--- LOADING: UNIVERSAL COMPATIBILITY MODE (TUPLE FIX) ---")
+
 import gradio as gr
 import logging
 import sys
@@ -15,7 +17,8 @@ class ListHandler(logging.Handler):
     def emit(self, record):
         try:
             msg = self.format(record)
-            if self.lock.acquire(timeout=0.5):
+            # Use simple lock to avoid deadlocks
+            if self.lock.acquire(timeout=0.1):
                 try:
                     self.log_buffer.append(msg)
                     if len(self.log_buffer) > 500:
@@ -26,12 +29,12 @@ class ListHandler(logging.Handler):
             self.handleError(record)
 
     def get_logs_as_str(self):
-        if self.lock.acquire(timeout=0.5):
+        if self.lock.acquire(timeout=0.1):
             try:
                 return "\n".join(reversed(self.log_buffer))
             finally:
                 self.lock.release()
-        return "Log buffer locked..."
+        return ""
 
 # Setup logging
 root = logging.getLogger()
@@ -61,7 +64,6 @@ except ImportError as e:
 
 # Initialize System
 print("Initializing CoreLoop...")
-# Warning thread for model download
 def hang_warning():
     time.sleep(10)
     print("\n[Note: If waiting here, system is likely downloading the embedding model...]\n")
@@ -69,25 +71,70 @@ def hang_warning():
 t = threading.Thread(target=hang_warning, daemon=True)
 t.start()
 
+# Initialize Tyrone
 tyrone = CoreLoop(verbose=True) 
-ingestor = PDFIngestor()
 
-# Interaction Functions
+# Initialize Ingestor (Link to Tyrone's memory)
+ingestor = PDFIngestor(memory_storage=tyrone.memory_storage)
+
+# --- Interaction Functions ---
 def chat_interaction(user_message, history):
-    if not user_message: return "", history
-    history = history + [[user_message, None]]
+    """
+    Gradio 6 requires dictionary-mode messages:
+    {"role": "user", "content": "..."}
+    {"role": "assistant", "content": "..."}
+    """
+    if not user_message:
+        return "", history
+
+    # Sanitize history to ensure valid dict-mode
+    cleaned = []
+    if history:
+        for h in history:
+            if isinstance(h, dict) and "role" in h and "content" in h:
+                cleaned.append({
+                    "role": h["role"],
+                    "content": str(h["content"])
+                })
+    history = cleaned
+
+    # Run Tyrone
     try:
         result = tyrone.run_once(user_message)
-        response_text = result.get("summary", "(No response)")
-        if result.get("decision"):
-            intent = result['decision'].get('intent', 'unknown')
-            pipeline = result['decision'].get('pipeline', [])
-            response_text += f"\n\n*(Intent: {intent} | Pipeline: {pipeline})*"
-        history[-1][1] = response_text
+
+        summary = str(result.get("summary", "(No response)"))
+        decision = result.get("decision", {})
+
+        intent = str(decision.get("intent", "unknown"))
+        pipeline = decision.get("pipeline", [])
+
+        if isinstance(pipeline, (list, tuple)):
+            pipeline_str = " → ".join(str(x) for x in pipeline)
+        else:
+            pipeline_str = str(pipeline)
+
+        response_text = summary + f"\n\n*(Intent: {intent} | Pipeline: {pipeline_str})*"
+
     except Exception as e:
         logger.error(f"UI Error: {e}", exc_info=True)
-        history[-1][1] = f"⚠️ Error: {e}"
+        response_text = f"⚠️ Error: {e}"
+
+    # Append user message
+    history.append({
+        "role": "user",
+        "content": str(user_message)
+    })
+
+    # Append assistant response
+    history.append({
+        "role": "assistant",
+        "content": str(response_text)
+    })
+
     return "", history
+
+
+
 
 def ingest_files(file_objs):
     if not file_objs: return "No files."
@@ -105,13 +152,13 @@ def ingest_files(file_objs):
 def refresh_logs():
     return log_capture.get_logs_as_str()
 
-# --- Gradio Layout (Simplified) ---
-# Removing theme argument to ensure compatibility
+# --- Gradio Layout ---
 with gr.Blocks(title="Tyrone ARS") as demo:
     gr.Markdown("# 🧠 Tyrone ARS")
     with gr.Row():
         with gr.Column(scale=2):
-            chatbot = gr.Chatbot(height=600)
+            # IMPORTANT: No 'type' argument here. Defaults to Tuples.
+            chatbot = gr.Chatbot(height=600, label="Interaction")
             msg = gr.Textbox(label="Command")
             with gr.Row():
                 send = gr.Button("Send", variant="primary")
@@ -126,8 +173,10 @@ with gr.Blocks(title="Tyrone ARS") as demo:
 
     msg.submit(chat_interaction, [msg, chatbot], [msg, chatbot])
     send.click(chat_interaction, [msg, chatbot], [msg, chatbot])
+    
     files.upload(ingest_files, files, status)
     timer.tick(refresh_logs, outputs=logs)
+    
     clear.click(lambda: None, None, chatbot, queue=False)
 
 # Initialize context

@@ -390,6 +390,7 @@ class CoreLoop:
         """Send user-facing messages while filtering internal progress spam."""
         if not message:
             return
+
         spam_markers = [
             "Plan update",
             "step",
@@ -402,7 +403,11 @@ class CoreLoop:
         if any(marker in message for marker in spam_markers):
             logger.debug(f"[INTERNAL] {message}")
             return
-        print(f"Tyrone> {message}")
+
+        # IMPORTANT: DO NOT print() in the Gradio environment.
+        # Logging is safe; stdout is not.
+        logger.info(f"Tyrone> {message}")
+
         # Broadcast to any stream queues if present
         for queues in self._stream_subscribers.values():
             for q in queues:
@@ -410,6 +415,8 @@ class CoreLoop:
                     q.put_nowait(message)
                 except Exception:
                     continue
+
+
 
     def run_background(self, goal: str, plan_id: str):
         """Run a goal asynchronously for API calls."""

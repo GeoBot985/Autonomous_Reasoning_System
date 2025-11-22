@@ -36,3 +36,4 @@ data/memory.duckdb.wal
 src/data/memory.duckdb
 src/data/memory.duckdb
 src/consolidated_app.py
+src/consolidated_app.py

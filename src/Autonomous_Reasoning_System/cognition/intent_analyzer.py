@@ -14,9 +14,14 @@ class IntentAnalyzer:
             "You are Tyrone's Intent Analyzer. "
             "Your task is to classify the user's intent and extract any key entities. "
             "Always respond ONLY with valid JSON of the form:\n"
-            '{"intent": "<one-word-intent>", "entities": {"entity1": "value", ...}, "reason": "<short reason>"}\n'
+            '{"intent": "<one-word-intent>", "family": "<family>", "subtype": "<subtype>", "entities": {"entity1": "value", ...}, "reason": "<short reason>"}\n'
             "Do not include any text outside this JSON. "
-            "Possible intents include: remind, reflect, summarize, recall, open, plan, query, greet, exit."
+            "Possible intents include: remind, reflect, summarize, recall, open, plan, query, greet, exit, memory_store.\n\n"
+            "CRITICAL RULES:\n"
+            "1. If the user mentions a birthday (e.g., 'X's birthday is Y', 'Remember that Z was born on...'), you MUST classify it as:\n"
+            '   "intent": "memory_store", "family": "personal_facts", "subtype": "birthday"\n'
+            "2. NEVER classify a birthday statement as a 'goal' or 'plan'.\n"
+            "3. Extract the person's name and the date as entities if present."
         )
 
     def analyze(self, text: str) -> dict:
@@ -32,14 +37,28 @@ class IntentAnalyzer:
                 result = json.loads(raw)
 
             result.setdefault("intent", "unknown")
+            result.setdefault("family", "unknown")
+            result.setdefault("subtype", "unknown")
             result.setdefault("entities", {})
             result.setdefault("reason", "(no reason provided)")
 
         except Exception:
-            result = {
-                "intent": "unknown",
-                "entities": {},
-                "reason": "Fallback: invalid LLM output",
-            }
+            # Fallback heuristic for birthdays if LLM fails
+            if "birthday" in text.lower():
+                result = {
+                    "intent": "memory_store",
+                    "family": "personal_facts",
+                    "subtype": "birthday",
+                    "entities": {},
+                    "reason": "Fallback: detected birthday keyword",
+                }
+            else:
+                result = {
+                    "intent": "unknown",
+                    "family": "unknown",
+                    "subtype": "unknown",
+                    "entities": {},
+                    "reason": "Fallback: invalid LLM output",
+                }
 
         return result

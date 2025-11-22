@@ -6,6 +6,7 @@ logger = logging.getLogger(__name__)
 
 class IntentFamily:
     MEMORY = "memory_operations"
+    PERSONAL_FACTS = "personal_facts"
     QA = "question_answering"
     GOALS = "goals_tasks"
     SUMMARIZATION = "summarization"
@@ -30,6 +31,7 @@ class Router:
             "remind": IntentFamily.MEMORY,
             "remember": IntentFamily.MEMORY,
             "store": IntentFamily.MEMORY,
+            "memory_store": IntentFamily.MEMORY,
             "save": IntentFamily.MEMORY,
             "recall": IntentFamily.MEMORY,
             "search": IntentFamily.MEMORY,
@@ -80,6 +82,7 @@ class Router:
         # Specific intent logic is handled within that tool or refined here.
         self.family_pipeline_map = {
             IntentFamily.MEMORY: ["handle_memory_ops"],
+            IntentFamily.PERSONAL_FACTS: ["handle_memory_ops"],
             IntentFamily.QA: ["answer_question"],
             IntentFamily.GOALS: ["handle_goal_ops"],
             IntentFamily.SUMMARIZATION: ["summarize_context"],
@@ -132,17 +135,23 @@ class Router:
         intent = "unknown"
         entities = {}
         analysis_data = {}
+        family = None
+        subtype = None
 
         if analysis_result["status"] == "success":
             analysis_data = analysis_result["data"]
             if isinstance(analysis_data, dict):
                 intent = analysis_data.get("intent", "unknown")
                 entities = analysis_data.get("entities", {})
+                # Respect analyzer's family classification if provided
+                family = analysis_data.get("family")
+                subtype = analysis_data.get("subtype")
         else:
             logger.warning(f"Intent analysis failed: {analysis_result['errors']}")
 
-        # 2. Determine Family
-        family = self.intent_family_map.get(intent, IntentFamily.QA) # Default to QA
+        # 2. Determine Family (if not provided by analyzer)
+        if not family or family == "unknown":
+            family = self.intent_family_map.get(intent, IntentFamily.QA) # Default to QA
 
         # 3. Select Pipeline
         pipeline = self._select_pipeline(family, intent)
@@ -150,6 +159,7 @@ class Router:
         return {
             "intent": intent,
             "family": family,
+            "subtype": subtype,
             "entities": entities,
             "analysis_data": analysis_data,
             "pipeline": pipeline

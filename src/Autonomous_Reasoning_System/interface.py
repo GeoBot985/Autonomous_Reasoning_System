@@ -2,19 +2,11 @@ import gradio as gr
 import logging
 import sys
 import threading
+import time
 from pathlib import Path
-
-# Import ARS components
-from Autonomous_Reasoning_System.control.core_loop import CoreLoop
-from Autonomous_Reasoning_System.io.pdf_ingestor import PDFIngestor
-from Autonomous_Reasoning_System.infrastructure.logging_utils import setup_logging
 
 # --- 1. Log Capture for UI ---
 class ListHandler(logging.Handler):
-    """
-    Custom logging handler that sends logs to a list 
-    so Gradio can display them in real-time.
-    """
     def __init__(self):
         super().__init__()
         self.log_buffer = []
@@ -23,148 +15,126 @@ class ListHandler(logging.Handler):
     def emit(self, record):
         try:
             msg = self.format(record)
-            with self.lock:
-                self.log_buffer.append(msg)
-                # Keep buffer size manageable
-                if len(self.log_buffer) > 500:
-                    self.log_buffer.pop(0)
+            if self.lock.acquire(timeout=0.5):
+                try:
+                    self.log_buffer.append(msg)
+                    if len(self.log_buffer) > 500:
+                        self.log_buffer.pop(0)
+                finally:
+                    self.lock.release()
         except Exception:
             self.handleError(record)
 
     def get_logs_as_str(self):
-        with self.lock:
-            return "\n".join(reversed(self.log_buffer)) # Newest on top
+        if self.lock.acquire(timeout=0.5):
+            try:
+                return "\n".join(reversed(self.log_buffer))
+            finally:
+                self.lock.release()
+        return "Log buffer locked..."
 
-# Setup logging first, add our custom handler
-setup_logging()
+# Setup logging
+root = logging.getLogger()
+if root.handlers:
+    for handler in root.handlers:
+        root.removeHandler(handler)
+
 log_capture = ListHandler()
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 log_capture.setFormatter(formatter)
-logging.getLogger().addHandler(log_capture)
+root.addHandler(log_capture)
+root.setLevel(logging.INFO)
+
+console = logging.StreamHandler(sys.stdout)
+console.setFormatter(formatter)
+root.addHandler(console)
+
 logger = logging.getLogger("Interface")
 
-# --- 2. Initialize System ---
-logger.info("Initializing Tyrone Core Loop...")
-tyrone = CoreLoop(verbose=True)
+# Import Core Modules
+try:
+    from Autonomous_Reasoning_System.control.core_loop import CoreLoop
+    from Autonomous_Reasoning_System.io.pdf_ingestor import PDFIngestor
+except ImportError as e:
+    print(f"\nCRITICAL ERROR: Could not import core modules. {e}\n")
+    sys.exit(1)
+
+# Initialize System
+print("Initializing CoreLoop...")
+# Warning thread for model download
+def hang_warning():
+    time.sleep(10)
+    print("\n[Note: If waiting here, system is likely downloading the embedding model...]\n")
+
+t = threading.Thread(target=hang_warning, daemon=True)
+t.start()
+
+tyrone = CoreLoop(verbose=True) 
 ingestor = PDFIngestor()
 
-# --- 3. Interaction Functions ---
-
+# Interaction Functions
 def chat_interaction(user_message, history):
-    """
-    Passes user input to CoreLoop and returns response.
-    """
-    if not user_message:
-        return "", history
-    
-    # Add user message to history immediately
+    if not user_message: return "", history
     history = history + [[user_message, None]]
-    
     try:
-        # Run the core loop
         result = tyrone.run_once(user_message)
-        response_text = result.get("summary", "(No response generated)")
-        
-        # Append reflection/plan info if available (Optional debugging aid)
+        response_text = result.get("summary", "(No response)")
         if result.get("decision"):
             intent = result['decision'].get('intent', 'unknown')
             pipeline = result['decision'].get('pipeline', [])
-            debug_info = f"\n\n*(Intent: {intent} | Pipeline: {pipeline})*"
-            response_text += debug_info
-
+            response_text += f"\n\n*(Intent: {intent} | Pipeline: {pipeline})*"
         history[-1][1] = response_text
-        
     except Exception as e:
         logger.error(f"UI Error: {e}", exc_info=True)
-        history[-1][1] = f"⚠️ System Error: {e}"
-
+        history[-1][1] = f"⚠️ Error: {e}"
     return "", history
 
 def ingest_files(file_objs):
-    """
-    Handles file drag-and-drop for RAG.
-    """
-    if not file_objs:
-        return "No files selected."
-    
+    if not file_objs: return "No files."
     results = []
     for f in file_objs:
         try:
-            path = f.name # Gradio passes a temp file path
+            path = f.name
             logger.info(f"UI: Ingesting {path}...")
             ingestor.ingest(path, summarize=True)
             results.append(f"✅ Ingested: {Path(path).name}")
         except Exception as e:
-            logger.error(f"Ingestion failed for {f.name}: {e}")
             results.append(f"❌ Failed: {Path(path).name} ({str(e)})")
-            
     return "\n".join(results)
 
 def refresh_logs():
-    """Returns the current log buffer string."""
     return log_capture.get_logs_as_str()
 
-# --- 4. Gradio Layout ---
-
-with gr.Blocks(title="Tyrone ARS Debugger", theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# 🧠 Tyrone Autonomous Reasoning System")
-    
+# --- Gradio Layout (Simplified) ---
+# Removing theme argument to ensure compatibility
+with gr.Blocks(title="Tyrone ARS") as demo:
+    gr.Markdown("# 🧠 Tyrone ARS")
     with gr.Row():
-        # LEFT COLUMN: Chat
         with gr.Column(scale=2):
-            chatbot = gr.Chatbot(height=600, label="Interaction")
-            msg = gr.Textbox(
-                show_label=False, 
-                placeholder="Enter your command or query...",
-                container=False,
-                scale=7
-            )
-            
+            chatbot = gr.Chatbot(height=600)
+            msg = gr.Textbox(label="Command")
             with gr.Row():
-                send_btn = gr.Button("Send", variant="primary", scale=1)
-                clear_btn = gr.Button("Clear Memory context (UI only)", scale=1)
-
-        # RIGHT COLUMN: Logs & RAG
+                send = gr.Button("Send", variant="primary")
+                clear = gr.Button("Clear")
         with gr.Column(scale=1):
-            # File Upload Section
-            gr.Markdown("### 📂 RAG Ingestion")
-            file_upload = gr.File(
-                file_count="multiple", 
-                file_types=[".pdf", ".txt"],
-                label="Drag & Drop Documents"
-            )
-            upload_status = gr.Textbox(label="Ingestion Status", interactive=False)
-            
-            # Log Section
-            gr.Markdown("### 🖥️ Live System Logs")
-            log_display = gr.Code(
-                language="shell", 
-                label="Console Output", 
-                interactive=False,
-                lines=20
-            )
-            # Auto-refresh logs every 1 second
-            log_timer = gr.Timer(1)
+            gr.Markdown("### 📂 RAG")
+            files = gr.File(file_count="multiple")
+            status = gr.Textbox(label="Status", interactive=False)
+            gr.Markdown("### 🖥️ Logs")
+            logs = gr.Code(language="shell", interactive=False, lines=20)
+            timer = gr.Timer(1)
 
-    # --- Wiring ---
-    
-    # Chat
     msg.submit(chat_interaction, [msg, chatbot], [msg, chatbot])
-    send_btn.click(chat_interaction, [msg, chatbot], [msg, chatbot])
-    
-    # Files
-    file_upload.upload(ingest_files, file_upload, upload_status)
-    
-    # Logs
-    log_timer.tick(refresh_logs, outputs=log_display)
-    
-    # Clear UI history (Core memory persists)
-    clear_btn.click(lambda: None, None, chatbot, queue=False)
+    send.click(chat_interaction, [msg, chatbot], [msg, chatbot])
+    files.upload(ingest_files, files, status)
+    timer.tick(refresh_logs, outputs=logs)
+    clear.click(lambda: None, None, chatbot, queue=False)
 
-# Launch
-if __name__ == "__main__":
-    # Initialize context (Feet)
+# Initialize context
+try:
     tyrone.initialize_context()
-    
-    # Launch on all interfaces so you can access from other devices if needed
-    demo.queue().launch(server_name="0.0.0.0", server_port=7860, share=False)
+except Exception:
+    pass
+
+if __name__ == "__main__":
+    demo.queue().launch(server_name="127.0.0.1", server_port=7860, share=False)

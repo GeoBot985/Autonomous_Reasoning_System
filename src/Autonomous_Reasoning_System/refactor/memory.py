@@ -11,54 +11,21 @@ from fastembed import TextEmbedding
 logger = logging.getLogger("ARS_Memory")
 
 class MemorySystem:
-    """
-    The Vault (FastEmbed + Pre-Warmed Cache).
-    """
-
     def __init__(self, db_path="data/memory.duckdb"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # 1. Load Embeddings
         print(f"[Memory] ⏳ Loading FastEmbed (CPU)...")
         start_t = time.time()
         self.embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
         self.vector_dim = 384 
         print(f"[Memory] ✅ Model loaded ({time.time() - start_t:.2f}s)")
 
-        # 2. Connect DB
         self._lock = threading.RLock()
         print(f"[Memory] ⏳ Connecting to DuckDB...")
         self.con = duckdb.connect(str(self.db_path))
-        
-        # 3. Init Schema
         self._init_schema()
-        
-        # 4. PRIME THE CACHE
-        self._prime_cache()
-        
-        print(f"[Memory] ✅ Database Ready & Warmed Up.")
-
-    def _prime_cache(self):
-        """
-        Forces the OS and DuckDB to load the Vector Index into RAM
-        so the first user query is instant.
-        """
-        print(f"[Memory] 🔥 Priming cache (Running dummy search)...")
-        try:
-            # 1. Warm up FastEmbed (allocates tensors)
-            dummy_vec = list(self.embedder.embed(["warmup"]))[0].tolist()
-            
-            # 2. Warm up DuckDB VSS (loads HNSW index)
-            with self._lock:
-                self.con.execute(f"""
-                    SELECT id FROM vectors 
-                    ORDER BY list_cosine_similarity(embedding, ?::FLOAT[{self.vector_dim}]) DESC 
-                    LIMIT 1
-                """, (dummy_vec,))
-        except Exception as e:
-            # It's okay if this fails on an empty DB
-            pass
+        print(f"[Memory] ✅ Database Ready.")
 
     def _get_embedding(self, text: str) -> list:
         return list(self.embedder.embed([text]))[0].tolist()
@@ -77,33 +44,63 @@ class MemorySystem:
             self.con.execute("CREATE TABLE IF NOT EXISTS triples (subject VARCHAR, relation VARCHAR, object VARCHAR, PRIMARY KEY(subject, relation, object))")
             self.con.execute("CREATE TABLE IF NOT EXISTS plans (id VARCHAR PRIMARY KEY, goal_text VARCHAR, steps JSON, status VARCHAR, created_at TIMESTAMP, updated_at TIMESTAMP)")
 
-    def remember(self, text: str, memory_type: str = "episodic", importance: float = 0.5, source: str = "user", metadata: dict = None):
-        if not text or not text.strip(): return None
+    # --- DEBUGGED BATCH METHOD ---
+    def remember_batch(self, texts: list, memory_type: str = "episodic", importance: float = 0.5, source: str = "user", metadata_list: list = None):
+        if not texts: return
         
-        mem_id = str(uuid4())
-        now = datetime.utcnow()
-        meta_json = json.dumps(metadata or {})
-        vector = self._get_embedding(text)
+        count = len(texts)
+        print(f"\n[Memory-Debug] 🏁 Starting Batch Insert of {count} items...")
+        total_start = time.time()
+        
+        # 1. Calculate Vectors
+        t0 = time.time()
+        print(f"[Memory-Debug]    🧠 Calculating {count} vectors on CPU...")
+        # FastEmbed handles lists natively
+        embeddings_generator = self.embedder.embed(texts)
+        # Convert generator to list immediately to measure calculation time
+        embeddings = list(embeddings_generator) 
+        t_embed = time.time() - t0
+        print(f"[Memory-Debug]    ✅ Vectors calculated in {t_embed:.2f}s ({(t_embed/count)*1000:.1f}ms per item)")
 
+        # 2. DB Write
+        t1 = time.time()
+        print(f"[Memory-Debug]    💾 Writing to DuckDB transaction...")
+        
+        now = datetime.utcnow()
+        
         with self._lock:
-            # Explicit Transaction to prevent locking issues
             self.con.execute("BEGIN TRANSACTION")
             try:
-                self.con.execute("INSERT INTO memory VALUES (?, ?, ?, ?, ?, ?, ?)", (mem_id, text, memory_type, now, importance, source, meta_json))
-                self.con.execute("INSERT INTO vectors VALUES (?, ?)", (mem_id, vector))
-                if metadata and metadata.get('kg_triples'):
-                    for s, r, o in metadata['kg_triples']:
-                        self.add_triple(s, r, o)
+                # Prepare data for bulk insertion logic (loop in python, execute in SQL)
+                for i, text in enumerate(texts):
+                    mem_id = str(uuid4())
+                    vector = embeddings[i].tolist()
+                    meta = metadata_list[i] if metadata_list and i < len(metadata_list) else {}
+                    meta_json = json.dumps(meta)
+
+                    self.con.execute(
+                        "INSERT INTO memory VALUES (?, ?, ?, ?, ?, ?, ?)", 
+                        (mem_id, text, memory_type, now, importance, source, meta_json)
+                    )
+                    self.con.execute(
+                        "INSERT INTO vectors VALUES (?, ?)", 
+                        (mem_id, vector)
+                    )
                 self.con.execute("COMMIT")
             except Exception as e:
                 self.con.execute("ROLLBACK")
+                print(f"[Memory-Debug] ❌ Batch DB Write Failed: {e}")
                 raise e
-        return mem_id
+        
+        t_write = time.time() - t1
+        print(f"[Memory-Debug]    ✅ DB Write finished in {t_write:.2f}s")
+        print(f"[Memory-Debug] 🏁 Total Batch Time: {time.time() - total_start:.2f}s\n")
+
+    # --- Standard Methods ---
+    def remember(self, text: str, memory_type: str = "episodic", importance: float = 0.5, source: str = "user", metadata: dict = None):
+        return self.remember_batch([text], memory_type, importance, source, [metadata] if metadata else None)
 
     def add_triple(self, subj, rel, obj):
-        # Triples are often added inside the 'remember' transaction, 
-        # but if called independently, we treat it as a single op.
-        # We use INSERT OR IGNORE so it doesn't fail inside a transaction.
         self.con.execute("INSERT OR IGNORE INTO triples VALUES (?, ?, ?)", (subj.lower(), rel.lower(), obj.lower()))
 
     def update_plan(self, plan_id, goal_text, steps, status="active"):
@@ -118,7 +115,6 @@ class MemorySystem:
     def search_similar(self, query: str, limit: int = 5, threshold: float = 0.4):
         query_vec = self._get_embedding(query)
         with self._lock:
-            # Truncate text in SQL to 500 chars to prevent Python memory lag
             results = self.con.execute(f"""
                 SELECT substr(m.text, 1, 500), m.memory_type, m.created_at, (1 - list_cosine_similarity(v.embedding, ?::FLOAT[{self.vector_dim}])) as score
                 FROM vectors v

@@ -38,18 +38,12 @@ class LLMEngine:
             print(f"[Brain]  ⚠️ Could not list models: {e}")
 
     def _warmup(self):
-        print(f"[Brain]  🔥 Warming up LLM (loading into VRAM)...")
+        print(f"[Brain]  🔥 Warming up LLM...")
         try:
-            # Send dummy request with keep_alive to hold it in VRAM
-            requests.post(self.generate_url, json={
-                "model": self.model, 
-                "prompt": "hi", 
-                "stream": False,
-                "keep_alive": "5m" # Keep in RAM for 5 mins
-            }, timeout=10)
+            requests.post(self.generate_url, json={"model": self.model, "prompt": "hi", "stream": False, "keep_alive": "5m"}, timeout=10)
             print(f"[Brain]  ✅ LLM Warmed up.")
         except Exception as e:
-            print(f"[Brain]  ⚠️ Warmup failed (will load on first query): {e}")
+            print(f"[Brain]  ⚠️ Warmup failed: {e}")
 
     def generate(self, prompt: str, system: str = None, temperature: float = 0.7, format: str = None) -> str:
         full_prompt = prompt
@@ -107,14 +101,27 @@ class Brain:
     def _classify_intent(self, text: str):
         lower = text.lower()
         
+        # 1. Explicit Storage Commands
         if any(x in lower for x in ["remember that", "don't forget", "remind me", "save this", "note that"]):
             return "store", {"source": "direct_command"}
         
+        # 2. Planning Keywords
         if any(x in lower for x in ["plan a", "create a goal", "how do i", "research"]):
             return "plan", {}
 
-        is_question = lower.startswith(("when", "what", "who", "where", "how", "is ", "does", "can")) or "?" in lower
-        # Explicit short assertion (Subject is Object)
+        # 3. RAG / Action Commands (The Fix!)
+        # If it starts with an imperative verb, it is a request for output (Chat), not input (Store).
+        rag_verbs = ["summarize", "explain", "describe", "list", "show", "find", "search", "define", "tell"]
+        clean_start = lower.replace("please ", "").strip()
+        if any(clean_start.startswith(v) for v in rag_verbs):
+            return "chat", {}
+
+        # 4. Question Check
+        # Expanded to catch "Could you..." or "Would you..."
+        is_question = lower.startswith(("when", "what", "who", "where", "how", "is ", "does", "can", "could", "would")) or "?" in lower
+        
+        # 5. Implicit Assertion (Store)
+        # Only store if it's NOT a question AND NOT a RAG command
         if not is_question and 3 < len(lower.split()) < 20:
              return "store", {"source": "implicit_assertion"}
 
@@ -165,15 +172,27 @@ class Brain:
     def _handle_chat(self, text: str) -> str:
         context_str = self.retrieval.get_context_string(text)
         
-        # UPDATED PROMPT: Forces "Chain of Thought" reasoning
-        system_prompt = (
-            "You are Tyrone. Use the provided CONTEXT to answer the user.\n"
-            "Rules:\n"
-            "1. FACTS in the context are absolute truth.\n"
-            "2. If the question implies a relationship (e.g., 'Cornelia's daughter'), "
-            "first find the name of that person in the facts, then find the answer for that person.\n"
-            "3. Do not guess. If the specific answer is missing, say you don't know."
-        )
+        # Detect "Soft" Intent (Summarization/Explanation)
+        is_summary = any(w in text.lower() for w in ["summarize", "list", "explain", "describe", "what is", "show"])
+        
+        if is_summary:
+            # PERMISSIVE PROMPT: Encourages synthesis
+            system_prompt = (
+                "You are Tyrone. Use the provided CONTEXT to answer the user.\n"
+                "Rules:\n"
+                "1. Synthesize the information found in the CONTEXT facts.\n"
+                "2. If the text is cut off or partial, summarize what is visible.\n"
+                "3. Ignore facts that look like previous user commands (e.g. 'Please summarize...')."
+            )
+        else:
+            # STRICT PROMPT: For specific fact retrieval
+            system_prompt = (
+                "You are Tyrone. Use the provided CONTEXT to answer the user.\n"
+                "Rules:\n"
+                "1. FACTS in the context are absolute truth.\n"
+                "2. Do not guess. If the specific answer is missing, say you don't know."
+            )
+            
         return self.llm.generate(text, system=f"{system_prompt}\n\n{context_str}")
 
     def _handle_planning(self, text: str) -> str:

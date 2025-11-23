@@ -101,9 +101,16 @@ class RetrievalSystem:
             print(f"[Retrieval]    🔍 Strategy: Broad Search {search_terms}")
 
         for kw in search_terms:
+            # 1. Get Triples (The fix is here)
             triples = self.memory.get_triples(kw)
-            results.extend(triples[:3])
+            for t in triples[:3]:
+                # Convert ('cornelia', 'has_birthday', '22 november') -> "cornelia has_birthday 22 november"
+                if isinstance(t, tuple) or isinstance(t, list):
+                    results.append(f"{t[0]} {t[1]} {t[2]}")
+                else:
+                    results.append(str(t))
 
+            # 2. Get Exact Matches
             text_matches = self.memory.search_exact(kw, limit=3)
             for tm in text_matches:
                 results.append(tm['text'])

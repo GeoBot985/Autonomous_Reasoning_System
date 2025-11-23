@@ -13,7 +13,7 @@ logger = logging.getLogger("ARS_Brain")
 
 # Config defaults
 OLLAMA_BASE = "http://localhost:11434/api"
-DEFAULT_MODEL = "gemma3:1b" 
+DEFAULT_MODEL = "granite4:3b" 
 
 class LLMEngine:
     def __init__(self, model=DEFAULT_MODEL, base_url=OLLAMA_BASE):

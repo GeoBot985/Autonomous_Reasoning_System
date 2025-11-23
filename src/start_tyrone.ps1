@@ -7,4 +7,4 @@ D:\Projects\Autonomous_Reasoning_System\.venv\Scripts\Activate.ps1
 
 # Run Tyrone
 #python -m Autonomous_Reasoning_System.io.whatsapp
-python -m Autonomous_Reasoning_System.interface
+python -m Autonomous_Reasoning_System.interface 

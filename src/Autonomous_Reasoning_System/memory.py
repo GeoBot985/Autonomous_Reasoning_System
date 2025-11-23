@@ -6,6 +6,7 @@ import time
 from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
+from typing import List
 from fastembed import TextEmbedding
 from . import config
 
@@ -66,8 +67,12 @@ class MemorySystem:
                 for i, text in enumerate(texts):
                     mem_id = str(uuid4())
                     vector = embeddings[i].tolist()
+                    
+                    # --- CHANGE START: Ensure metadata exists and add chunk_index ---
                     meta = metadata_list[i] if metadata_list and i < len(metadata_list) else {}
+                    meta['chunk_index'] = i 
                     meta_json = json.dumps(meta)
+                    # --- CHANGE END ---
 
                     self.con.execute("INSERT INTO memory VALUES (?, ?, ?, ?, ?, ?, ?)", (mem_id, text, memory_type, now, importance, source, meta_json))
                     self.con.execute("INSERT INTO vectors VALUES (?, ?)", (mem_id, vector))
@@ -81,6 +86,30 @@ class MemorySystem:
                 self.con.execute("ROLLBACK")
                 print(f"[Memory] ❌ Batch failed: {e}")
                 raise e
+            
+    def get_whole_document(self, filename: str) -> str:
+        """
+        Retrieves all chunks associated with a specific filename, 
+        ordered correctly, and joins them into a single string.
+        """
+        print(f"[Memory] 📖 Reassembling document: {filename}...")
+        with self._lock:
+            # We sort by created_at (for different upload sessions) 
+            # AND metadata->chunk_index (for order within a session)
+            query = """
+                SELECT text 
+                FROM memory 
+                WHERE source = ? 
+                ORDER BY created_at ASC, CAST(json_extract(metadata, '$.chunk_index') AS INTEGER) ASC
+            """
+            results = self.con.execute(query, (filename,)).fetchall()
+        
+        if not results:
+            return f"No document found with name: {filename}"
+            
+        # Join chunks with a newline or space
+        full_text = "\n".join([r[0] for r in results])
+        return full_text
 
     def remember(self, text: str, memory_type: str = "episodic", importance: float = 0.5, source: str = "user", metadata: dict = None):
         return self.remember_batch([text], memory_type, importance, source, [metadata] if metadata else None)
@@ -127,6 +156,31 @@ class MemorySystem:
         with self._lock:
             res = self.con.execute("SELECT text FROM memory ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [r[0] for r in res]
+    
+    # --- memory.py patch (New Method for MemorySystem) ---
+
+    def calculate_similarities(self, query: str, texts: List[str]) -> List[float]:
+        """
+        Calculates cosine similarity between the query and a list of texts using 
+        the internal embedder. Returns a list of similarity scores.
+        """
+        if not texts: 
+            return []
+        
+        # 1. Embed all texts in one batch (query first)
+        all_embeddings = list(self.embedder.embed([query] + texts))
+        query_vec = all_embeddings[0]
+        text_vecs = all_embeddings[1:]
+        
+        similarities = []
+        for text_vec in text_vecs:
+            # Cosine similarity for normalized vectors is the dot product.
+            # Calculate dot product manually using list comprehension
+            dot_product = sum(query_vec[i] * text_vec[i] for i in range(len(query_vec)))
+            similarities.append(float(dot_product)) 
+            
+        return similarities
+    
 
 # --- THIS WAS THE MISSING PART ---
 def get_memory_system(db_path=None):

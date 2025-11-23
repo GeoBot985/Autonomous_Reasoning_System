@@ -6,6 +6,7 @@ import time
 import textwrap
 import signal
 import os
+import re
 from pathlib import Path
 
 _processing_files = set()   # ← Global deduplication lock
@@ -58,6 +59,9 @@ print("🧠 Initializing Refactored Brain...")
 brain = get_brain()
 
 def chat_interaction(user_message, history):
+    # Retrieve the brain instance (initializes only once per process)
+    local_brain = get_brain()
+    
     print(f"\n[UI] 📨 Received: '{user_message}'")
     if not user_message: return "", history
     if history is None: history = []
@@ -66,7 +70,7 @@ def chat_interaction(user_message, history):
     print(f"[UI] ⏳ Sending to Brain...")
     start_t = time.time()
     try:
-        response_text = brain.think(user_message)
+        response_text = local_brain.think(user_message, history)
         print(f"[UI] ✅ Brain responded in {time.time() - start_t:.2f}s")
     except Exception as e:
         logger.error(f"Brain Error: {e}", exc_info=True)
@@ -75,8 +79,17 @@ def chat_interaction(user_message, history):
     history.append({"role": "assistant", "content": response_text})
     return "", history
 
-# --- INGESTION FIX ---
+# Global headers regex for CV-style documents
+# We look for common headers like EXPERIENCE, SKILLS, FMI, etc.
+HEADER_REGEX = re.compile(
+    r'^\s*(EXPERIENCE|SKILLS|EDUCATION|SUMMARY|PROFILE|FMI|PROJECTS|AWARDS|CONTACTS|HISTORY|GOALS|GOAL)\s*$', 
+    re.IGNORECASE
+)
+
 def ingest_files(file_objs):
+    # Retrieve the brain instance (initializes only once per process)
+    local_brain = get_brain()
+
     global _processing_files
     
     if not file_objs:
@@ -87,55 +100,77 @@ def ingest_files(file_objs):
     for file_obj in file_objs:
         path = Path(file_obj.name)
 
-        # ←←← DEDUPLICATION: skip if already processing this exact file
         if path in _processing_files:
             results.append(f"Already processing → skipped: {path.name}")
             continue
 
         _processing_files.add(path)
-        batch_texts = []        # ←←← ALWAYS define it here (this was the bug!)
+        full_text = ""
         
         try:
             print(f"[UI] Ingesting {path.name}...")
 
             # ── 1. Extract text ──
-            text_content = ""
             if path.suffix.lower() == ".pdf" and HAS_PDF:
-                reader = PdfReader(path)
-                text_content = "\n".join(page.extract_text() or "" for page in reader.pages)
-            elif path.suffix.lower() in {".txt", ".md", ".py", ".json"}:
-                text_content = Path(path).read_text(encoding="utf-8", errors="ignore")
+                reader = PdfReader(file_obj.name)
+                full_text = "".join(page.extract_text() for page in reader.pages)
             else:
-                results.append(f"Unsupported format: {path.name}")
-                _processing_files.discard(path)
+                with open(file_obj.name, 'r', encoding='utf-8', errors='ignore') as f:
+                    full_text = f.read()
+            
+            if not full_text:
+                results.append(f"No usable text found in: {path.name}")
                 continue
 
-            if not text_content.strip():
-                results.append(f"Empty document: {path.name}")
-                _processing_files.discard(path)
-                continue
+            # ── 2. Segment by Header (NEW LOGIC) ──
+            section_segments = [] # Stores: [{'text': '...', 'section': '...'}, ...]
+            current_section = "DOCUMENT HEADER"
+            current_text_block = ""
+            
+            lines = full_text.split('\n')
+            
+            for line in lines:
+                header_match = HEADER_REGEX.match(line)
+                
+                # Heuristic: Check if line matches a header pattern and is short
+                if header_match and 5 < len(line.strip()) < 30: 
+                    # End of previous section
+                    if current_text_block.strip():
+                        section_segments.append({'text': current_text_block.strip(), 'section': current_section})
+                    
+                    # Start of new section
+                    current_section = header_match.group(1).upper()
+                    current_text_block = line + "\n"
+                else:
+                    current_text_block += line + "\n"
+            
+            # Add the final block
+            if current_text_block.strip():
+                section_segments.append({'text': current_text_block.strip(), 'section': current_section})
+            
+            # ── 3. Chunk Segments and Prepare Metadata ──
+            batch_texts = []
+            metadata_list = []
+            
+            for segment in section_segments:
+                # Chunk the section block (using the standard 500 width)
+                # Setting replace_whitespace=False to prevent paragraphs merging poorly
+                chunks = textwrap.wrap(segment['text'], width=500, replace_whitespace=False)
+                
+                for chunk in chunks:
+                    batch_texts.append(chunk)
+                    # Metadata now includes the section header
+                    metadata_list.append({'section': segment['section']}) 
 
-            # ── 2. Chunk ──
-            chunks = textwrap.wrap(
-                text_content,
-                width=500,
-                break_long_words=False,
-                replace_whitespace=False
-            )
-            print(f"[UI] Splitting {path.name} into {len(chunks)} chunks...")
-
-            for chunk in chunks:
-                if chunk.strip():
-                    batch_texts.append(chunk.strip())
-
-            # ── 3. Save ──
+            # ── 4. Save ──
             if batch_texts:
                 print(f"[Memory] Batch processing {len(batch_texts)} chunks...")
-                brain.memory.remember_batch(
+                local_brain.memory.remember_batch(
                     batch_texts,
                     memory_type="document_chunk",
                     importance=0.5,
-                    source=path.name
+                    source=path.name,
+                    metadata_list=metadata_list # <-- Pass the metadata list
                 )
                 results.append(f"Completed: {path.name} ({len(batch_texts)} chunks)")
             else:
@@ -145,7 +180,7 @@ def ingest_files(file_objs):
             logger.error(f"Ingest failed for {path.name}: {e}", exc_info=True)
             results.append(f"Failed: {path.name} ({str(e)})")
         finally:
-            _processing_files.discard(path)   # ← always release the lock
+            _processing_files.discard(path)
 
     return "\n".join(results)
 
@@ -175,5 +210,21 @@ with gr.Blocks(title="Tyrone ARS") as demo:
     clear.click(lambda: [], None, chatbot, queue=False)
 
 if __name__ == "__main__":
+    # ... (all gr.Blocks definition and component bindings remain the same) ...
+
+    # The final launch command
     print("\n[UI] 🚀 Launching Gradio. Press Ctrl+C to stop.")
-    demo.queue().launch(server_name="127.0.0.1", server_port=7860, share=False)
+    
+    # --- CHANGE THIS LINE ---
+    # ADDED 'show_api=False' and 'inbrowser=False' for cleaner startup, but most importantly:
+    # ADDED 'prevent_thread_lock=True' and removed the reliance on the automatic reloader.
+    demo.queue().launch(
+        server_name="127.0.0.1", 
+        server_port=7860, 
+        share=False, 
+        prevent_thread_lock=True, # Recommended for complex multi-threaded/process apps
+        inbrowser=False,
+        # The key to stop reloading is to ensure you are not using the development server 
+        # which often relies on reloading, or running it with the specific `__name__ == '__main__'` guard
+        # which we already did. This should fix the final import loop.
+    )

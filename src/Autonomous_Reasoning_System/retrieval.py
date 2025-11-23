@@ -31,6 +31,10 @@ class RetrievalSystem:
             "info", "information", "remember", "remind", "note"
         }
 
+    # --- retrieval.py patch (Full get_context_string method) ---
+
+    # --- retrieval.py patch (Full get_context_string method) ---
+
     def get_context_string(self, query: str, include_history: List[str] = None) -> str:
         print(f"[Retrieval] 🟢 Building context for: '{query}'")
         start_t = time.time()
@@ -42,17 +46,31 @@ class RetrievalSystem:
         keywords = self._extract_keywords_fast(query)
         print(f"[Retrieval]    🔑 Keywords: {keywords}")
         
+        # --- Handle Trivial Queries ---
         if not keywords:
             print(f"[Retrieval]    🚀 Trivial query — skipping heavy search")
+            if include_history:
+                context_lines.append("\n### RELEVANT CONVERSATION HISTORY ###")
+                context_lines.extend(include_history[-1:]) 
             return "\n".join(context_lines)
         
+        # --- Memory Retrieval (RAG) ---
         facts = self._retrieve_deterministic(keywords)
         print(f"[Retrieval]    📂 Facts found: {len(facts)}")
+        
+        # --- NEW LOGIC: Strengthen Vector Query ---
+        vector_query = query
+        if facts:
+            # Join relevant facts (avoiding overly long ones) to strengthen the query sent to the embedder.
+            fact_context = " ".join([f for f in facts if len(f) < 200]) 
+            vector_query = f"{query}. CONTEXT HINT: {fact_context}"
+            print(f"[Retrieval]    ⭐ Query strengthened by facts for vector search.")
         
         limit = 1 if facts else 3
         print(f"[Retrieval]    🧠 Requesting vectors...")
         vec_start = time.time()
-        vectors = self.memory.search_similar(query, limit=limit, threshold=0.35)
+        # Use the potentially strengthened query for embedding
+        vectors = self.memory.search_similar(vector_query, limit=limit, threshold=0.35)
         print(f"[Retrieval]    ✅ Vectors: {len(vectors)} ({time.time() - vec_start:.2f}s)")
 
         if facts or vectors:
@@ -82,9 +100,35 @@ class RetrievalSystem:
         else:
             context_lines.append("\n(No specific relevant memories found)")
 
+        # --- Semantic History Filtering ---
         if include_history:
-            context_lines.append("\n### RECENT CONVERSATION ###")
-            context_lines.extend(include_history[-5:]) 
+            # The last two entries are the immediately preceding Assistant response and User question.
+            # We MUST include them for immediate follow-up context.
+            guaranteed_context = include_history[-2:] if len(include_history) >= 2 else include_history
+
+            # The rest of the history is subject to filtering
+            history_to_filter = include_history[:-2]
+            
+            # 1. Separate content from role prefix for embedding
+            history_contents = [line.split(': ', 1)[-1] for line in history_to_filter]
+                
+            # 2. Calculate similarities
+            similarities = self.memory.calculate_similarities(query, history_contents)
+            
+            filtered_history = guaranteed_context[:] # Start with the two guaranteed recent turns
+            THRESHOLD = 0.70 
+            
+            # 3. Filter and rebuild history list
+            for i, sim in enumerate(similarities):
+                if sim >= THRESHOLD:
+                    # Append turns from the past that are still semantically relevant
+                    filtered_history.append(history_to_filter[i])
+            
+            # 4. Limit the final history to the last 5 relevant turns (maintaining recency focus)
+            if filtered_history:
+                context_lines.append("\n### RELEVANT CONVERSATION HISTORY ###")
+                # We still limit to 5 overall, but the two most recent are prioritized within that limit.
+                context_lines.extend(filtered_history[-5:])
 
         print(f"[Retrieval] 🏁 Context built ({time.time() - start_t:.2f}s)")
         return "\n".join(context_lines)

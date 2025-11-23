@@ -4,70 +4,95 @@ import json
 import re
 import datetime
 import time
+import threading
 from typing import Optional, List
 
+from . import config
 from .memory import get_memory_system
 from .retrieval import RetrievalSystem
+from .reflection import get_reflector
+
 
 logger = logging.getLogger("ARS_Brain")
 
-# Config defaults
-OLLAMA_BASE = "http://localhost:11434/api"
-DEFAULT_MODEL = "granite4:3b" 
+# Config defaults (fall back to config module for host/model)
+OLLAMA_BASE = getattr(config, "OLLAMA_API_BASE", "http://localhost:11434/api")
+DEFAULT_MODEL = getattr(config, "LLM_MODEL", "granite4:3b")
+TAGS_TIMEOUT = 5
+WARMUP_TIMEOUT = 15
+REQUEST_TIMEOUT = 90  # Trimmed to avoid long hangs during planning
 
 class LLMEngine:
-    def __init__(self, model=DEFAULT_MODEL, base_url=OLLAMA_BASE):
+    def __init__(self, model: str = DEFAULT_MODEL, api_base: str = OLLAMA_BASE):
+        # Configure Ollama endpoints and model once (avoid recursive init)
         self.model = model
-        self.generate_url = f"{base_url}/generate"
-        self.tags_url = f"{base_url}/tags"
-        print(f"[Brain]  🧠 LLM Engine configured: {model}")
+        self.api_base = api_base.rstrip('/')
+        self.tags_url = f"{self.api_base}/tags"
+        self.generate_url = f"{self.api_base}/generate"
+        
+        # --- NEW: Use a persistent session for better connection handling ---
+        self.session = requests.Session()
+        self.session.trust_env = False  # avoid proxy/env interference for local Ollama
+        # ------------------------------------------------------------------
+        
         self._check_model_exists()
         self._warmup()
 
-    def _check_model_exists(self):
-        print(f"[Brain]  🔍 Checking if model '{self.model}' exists locally...")
+    def ping(self, timeout: int = 2) -> bool:
+        """Quick health check against the tags endpoint."""
         try:
-            resp = requests.get(self.tags_url, timeout=5)
+            self.session.get(self.tags_url, timeout=timeout).raise_for_status()
+            return True
+        except Exception:
+            return False
+
+    def _check_model_exists(self):
+        print(f"[Brain] Checking if model '{self.model}' exists locally...")
+        try:
+            # Use session for the request
+            resp = self.session.get(self.tags_url, timeout=TAGS_TIMEOUT)
             if resp.status_code == 200:
                 models = [m['name'] for m in resp.json().get('models', [])]
                 if any(self.model in m for m in models):
-                    print(f"[Brain]  ✅ Model '{self.model}' found.")
+                    print(f"[Brain] ✅ Model '{self.model}' found.")
                 else:
-                    print(f"[Brain]  ⚠️ WARNING: Model '{self.model}' not found in Ollama!")
+                    print(f"[Brain] ⚠️ WARNING: Model '{self.model}' not found in Ollama!")
         except Exception as e:
-            print(f"[Brain]  ⚠️ Could not list models: {e}")
+            print(f"[Brain] ⚠️ Could not list models: {e}")
 
     def _warmup(self):
-        print(f"[Brain]  🔥 Warming up LLM...")
+        print("[Brain] Warming up LLM...")
         try:
-            requests.post(self.generate_url, json={"model": self.model, "prompt": "hi", "stream": False, "keep_alive": "5m"}, timeout=10)
-            print(f"[Brain]  ✅ LLM Warmed up.")
+            # Use session for the request
+            self.session.post(self.generate_url, json={"model": self.model, "prompt": "hi", "stream": False, "keep_alive": "5m"}, timeout=WARMUP_TIMEOUT)
+            print("[Brain] ✅ LLM Warmed up.")
         except Exception as e:
-            print(f"[Brain]  ⚠️ Warmup failed: {e}")
+            print(f"[Brain] ⚠️ Warmup failed: {e}")
 
     def generate(self, prompt: str, system: str = None, temperature: float = 0.7, format: str = None) -> str:
         full_prompt = prompt
         if system:
             full_prompt = f"SYSTEM: {system}\n\nUSER: {prompt}"
-        
-        payload = { 
-            "model": self.model, 
-            "prompt": full_prompt, 
-            "stream": False, 
-            "temperature": temperature 
+        payload = {
+            "model": self.model,
+            "prompt": full_prompt,
+            "stream": False,
+            "temperature": temperature
         }
         if format:
             payload["format"] = format
-
-        print(f"[LLM] 📤 Sending request to Ollama ({len(full_prompt)} chars)...")
+        print(f"[LLM] Sending request to Ollama ({len(full_prompt)} chars)...")
         start_t = time.time()
         try:
-            resp = requests.post(self.generate_url, json=payload, timeout=120)
+            # Use session for the request (with a sane timeout to avoid UI hangs)
+            resp = self.session.post(self.generate_url, json=payload, timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
-            print(f"[LLM] 📥 Response received ({time.time() - start_t:.2f}s)")
+            print(f"[LLM] Response received ({time.time() - start_t:.2f}s)")
             return resp.json().get("response", "").strip()
         except Exception as e:
             logger.error(f"LLM Generation failed: {e}")
+            if "resp" in locals():
+                logger.error(f"Ollama status={resp.status_code}, body={resp.text[:500]}")
             return f"[Error: LLM unavailable - {e}]"
 
 class Brain:
@@ -78,10 +103,28 @@ class Brain:
         self.retrieval = RetrievalSystem(self.memory)
         self.llm = LLMEngine()
         self.plugins = {}
+        self.reflector = get_reflector(self.memory, self.llm)
+        #self._start_maintenance_loop()
         self._register_basic_tools()
         print(f"[Brain] ✅ Brain Ready (Total startup: {time.time() - start_t:.2f}s)\n")
 
-    def think(self, user_input: str) -> str:
+    def _run_maintenance(self):
+        """Runs periodic memory decay and session consolidation."""
+        while True:
+            time.sleep(1800)
+            print("[Brain] Running scheduled maintenance...")
+            try:
+                self.reflector.decay_importance()
+                self.reflector.consolidate_sessions()
+            except Exception as e:
+                logger.error(f"Maintenance task failed: {e}")
+
+    def _start_maintenance_loop(self):
+        """Starts the maintenance thread in the background."""
+        t = threading.Thread(target=self._run_maintenance, daemon=True)
+        t.start()
+
+    def think(self, user_input: str, history: List[dict] = None) -> str:
         if not user_input or not user_input.strip(): return ""
         text = user_input.strip()
         
@@ -96,7 +139,24 @@ class Brain:
         elif intent == "plan":
             return self._handle_planning(text)
         else:
-            return self._handle_chat(text)
+            # ✅ FIX: 'history' is now defined by the function signature
+            return self._handle_chat(text, history)
+        
+    def _format_history(self, history: List[dict]) -> List[str]:
+        """Converts the list of dicts history into a list of strings for context."""
+        formatted = []
+        if not history:
+            return []
+        
+        # Exclude the very last entry, as that is the user's current message (the query itself)
+        # We only want previous turns.
+        previous_turns = history[:-1] 
+
+        for turn in previous_turns:
+            role = turn['role'].capitalize()
+            content = turn['content']
+            formatted.append(f"{role}: {content}")
+        return formatted
 
     def _classify_intent(self, text: str):
         lower = text.lower()
@@ -169,10 +229,36 @@ class Brain:
             print(f"[Brain]    ⚠️ KG Extraction failed: {e}")
             return []
 
-    def _handle_chat(self, text: str) -> str:
-        context_str = self.retrieval.get_context_string(text)
+    # --- brain.py patch (Full _handle_chat method) ---
+    def _handle_chat(self, text: str, history: List[dict] = None) -> str:
         
-        # Detect "Soft" Intent (Summarization/Explanation)
+        # 1. Check for specific document request
+        # Regex looks for (summarize/explain/show me) followed by a file name (e.g., manual.pdf)
+        doc_match = re.search(r"(summarize|explain|show me).*?(\w+\.\w+)", text, re.IGNORECASE)
+        
+        if doc_match:
+            action = doc_match.group(1).lower()
+            filename = doc_match.group(2)
+            
+            full_doc = self.memory.get_whole_document(filename)
+            
+            # Context window safeguard (15,000 chars is conservative for a 3B model)
+            if full_doc and len(full_doc) < 15000: 
+                context_str = f"### FULL DOCUMENT SOURCE: {filename} ###\n{full_doc}"
+                # Rephrase the user query to tell the LLM what to do with the *provided content*
+                text = f"{action} the provided document content." 
+                print(f"[Brain] 📄 Using full document '{filename}' as context (Size: {len(full_doc)} chars).")
+            else:
+                # Document too long or not found, fall back to standard RAG
+                formatted_history = self._format_history(history)
+                context_str = self.retrieval.get_context_string(text, include_history=formatted_history)
+        
+        else:
+            # 2. Standard RAG flow (No document explicitly requested)
+            formatted_history = self._format_history(history)
+            context_str = self.retrieval.get_context_string(text, include_history=formatted_history)
+        
+        # Detect "Soft" Intent (Summarization/Explanation) 
         is_summary = any(w in text.lower() for w in ["summarize", "list", "explain", "describe", "what is", "show"])
         
         if is_summary:
@@ -198,7 +284,8 @@ class Brain:
     def _handle_planning(self, text: str) -> str:
         try:
             from .plan_builder import get_planner
-            return get_planner(self.memory, self.llm).process_request(text)
+            # Pass the retrieval system to the planner factory function
+            return get_planner(self.memory, self.llm, self.retrieval).process_request(text)
         except Exception as e:
             return f"⚠️ Planning error: {e}"
 

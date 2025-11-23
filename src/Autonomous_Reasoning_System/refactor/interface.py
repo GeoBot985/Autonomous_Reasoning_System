@@ -8,14 +8,9 @@ import signal
 import os
 from pathlib import Path
 
-# --- CTRL+C HANDLER ---
-def force_exit(signum, frame):
-    print("\n[System] 🛑 Ctrl+C detected. Exiting cleanly...")
-    os._exit(0)
+_processing_files = set()   # ← Global deduplication lock
 
-signal.signal(signal.SIGINT, force_exit)
-signal.signal(signal.SIGTERM, force_exit)
-
+# Try importing pypdf
 try:
     from pypdf import PdfReader
     HAS_PDF = True
@@ -24,7 +19,13 @@ except ImportError:
 
 from .brain import get_brain
 
-# --- Log Capture ---
+# --- CTRL+C HANDLER ---
+def force_exit(signum, frame):
+    os._exit(0)
+signal.signal(signal.SIGINT, force_exit)
+signal.signal(signal.SIGTERM, force_exit)
+
+# --- Logs ---
 class ListHandler(logging.Handler):
     def __init__(self):
         super().__init__()
@@ -36,14 +37,14 @@ class ListHandler(logging.Handler):
             with self.lock:
                 self.log_buffer.append(msg)
                 if len(self.log_buffer) > 200: self.log_buffer.pop(0)
-        except Exception: self.handleError(record)
+        except: pass
     def get_logs_as_str(self):
         with self.lock: return "\n".join(reversed(self.log_buffer))
 
 root = logging.getLogger()
 root.setLevel(logging.INFO)
 if root.handlers:
-    for handler in root.handlers: root.removeHandler(handler)
+    for h in root.handlers: root.removeHandler(h)
 log_capture = ListHandler()
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
 log_capture.setFormatter(formatter)
@@ -53,15 +54,13 @@ console.setFormatter(formatter)
 root.addHandler(console)
 logger = logging.getLogger("Interface")
 
-# --- Init ---
-print("🧠 Initializing Refactored Brain (FastEmbed Edition)...")
+print("🧠 Initializing Refactored Brain...")
 brain = get_brain()
 
 def chat_interaction(user_message, history):
     print(f"\n[UI] 📨 Received: '{user_message}'")
     if not user_message: return "", history
     if history is None: history = []
-    
     history.append({"role": "user", "content": user_message})
     
     print(f"[UI] ⏳ Sending to Brain...")
@@ -72,102 +71,88 @@ def chat_interaction(user_message, history):
     except Exception as e:
         logger.error(f"Brain Error: {e}", exc_info=True)
         response_text = f"⚠️ Error: {e}"
-        print(f"[UI] ❌ Brain Error: {e}")
-
+    
     history.append({"role": "assistant", "content": response_text})
     return "", history
 
-# --- INGESTION (With Granular PDF Debugging) ---
+# --- INGESTION FIX ---
 def ingest_files(file_objs):
-    if not file_objs: return "No files selected."
-    results = []
-    print(f"\n[UI] 📂 Ingesting {len(file_objs)} files...")
+    global _processing_files
     
-    for f in file_objs:
-        path = Path(f.name)
-        t_start_file = time.time()
-        try:
-            text_content = ""
-            
-            # 1. Read File
-            t_read_start = time.time()
-            
-            if path.suffix.lower() == ".pdf":
-                if HAS_PDF:
-                    print(f"[UI-Debug] 📄 Opening PDF: {path.name}")
-                    reader = PdfReader(f.name)
-                    num_pages = len(reader.pages)
-                    print(f"[UI-Debug]    Found {num_pages} pages. Extracting...")
-                    
-                    extracted_pages = []
-                    for i, page in enumerate(reader.pages):
-                        # Log every page so we see where it hangs
-                        print(f"[UI-Debug]    -> Reading page {i+1}/{num_pages}...")
-                        page_text = page.extract_text()
-                        if page_text:
-                            extracted_pages.append(page_text)
-                            
-                    text_content = "\n".join(extracted_pages)
-                    print(f"[UI-Debug]    ✅ PDF Extraction complete.")
-                else:
-                    results.append(f"❌ Skipped {path.name} (pypdf not installed)")
-                    continue
-            
-            elif path.suffix.lower() in [".txt", ".md", ".py", ".json", ".log"]:
-                with open(f.name, "r", encoding="utf-8") as txt_file:
-                    text_content = txt_file.read()
-            else:
-                results.append(f"⚠️ Unknown type: {path.name}")
-                continue
-                
-            print(f"[UI-Debug] Read file '{path.name}' in {time.time() - t_read_start:.2f}s. Size: {len(text_content)} chars")
+    if not file_objs:
+        return "No files uploaded."
 
-            # 2. Chunk and Batch
-            if text_content.strip():
-                t_chunk_start = time.time()
-                batch_texts = []
-                
-                # Paragraph Chunking
-                paragraphs = text_content.split('\n\n')
-                current_chunk = ""
-                for para in paragraphs:
-                    para = para.strip()
-                    if not para: continue
-                    if len(current_chunk) + len(para) < 800:
-                        current_chunk += "\n\n" + para if current_chunk else para
-                    else:
-                        if current_chunk: batch_texts.append(current_chunk)
-                        overlap = current_chunk[-150:] if len(current_chunk) > 150 else current_chunk
-                        current_chunk = overlap + "\n\n" + para
-                if current_chunk: batch_texts.append(current_chunk)
-                
-                print(f"[UI-Debug] Chunking took {time.time() - t_chunk_start:.2f}s. Chunks: {len(batch_texts)}")
-                
-                # 3. Batch Insert
-                if batch_texts:
-                    # Calls memory.remember_batch
-                    brain.memory.remember_batch(
-                        batch_texts, 
-                        memory_type="document_chunk", 
-                        importance=0.5, 
-                        source=path.name
-                    )
-                    
-                total_time = time.time() - t_start_file
-                results.append(f"✅ Ingested: {path.name} ({len(batch_texts)} chunks) in {total_time:.2f}s")
+    results = []
+
+    for file_obj in file_objs:
+        path = Path(file_obj.name)
+
+        # ←←← DEDUPLICATION: skip if already processing this exact file
+        if path in _processing_files:
+            results.append(f"Already processing → skipped: {path.name}")
+            continue
+
+        _processing_files.add(path)
+        batch_texts = []        # ←←← ALWAYS define it here (this was the bug!)
+        
+        try:
+            print(f"[UI] Ingesting {path.name}...")
+
+            # ── 1. Extract text ──
+            text_content = ""
+            if path.suffix.lower() == ".pdf" and HAS_PDF:
+                reader = PdfReader(path)
+                text_content = "\n".join(page.extract_text() or "" for page in reader.pages)
+            elif path.suffix.lower() in {".txt", ".md", ".py", ".json"}:
+                text_content = Path(path).read_text(encoding="utf-8", errors="ignore")
             else:
-                results.append(f"⚠️ Empty file: {path.name}")
+                results.append(f"Unsupported format: {path.name}")
+                _processing_files.discard(path)
+                continue
+
+            if not text_content.strip():
+                results.append(f"Empty document: {path.name}")
+                _processing_files.discard(path)
+                continue
+
+            # ── 2. Chunk ──
+            chunks = textwrap.wrap(
+                text_content,
+                width=500,
+                break_long_words=False,
+                replace_whitespace=False
+            )
+            print(f"[UI] Splitting {path.name} into {len(chunks)} chunks...")
+
+            for chunk in chunks:
+                if chunk.strip():
+                    batch_texts.append(chunk.strip())
+
+            # ── 3. Save ──
+            if batch_texts:
+                print(f"[Memory] Batch processing {len(batch_texts)} chunks...")
+                brain.memory.remember_batch(
+                    batch_texts,
+                    memory_type="document_chunk",
+                    importance=0.5,
+                    source=path.name
+                )
+                results.append(f"Completed: {path.name} ({len(batch_texts)} chunks)")
+            else:
+                results.append(f"No usable text found in: {path.name}")
 
         except Exception as e:
-            logger.error(f"Ingest failed for {path.name}: {e}")
-            results.append(f"❌ Failed: {path.name} ({str(e)})")
+            logger.error(f"Ingest failed for {path.name}: {e}", exc_info=True)
+            results.append(f"Failed: {path.name} ({str(e)})")
+        finally:
+            _processing_files.discard(path)   # ← always release the lock
 
     return "\n".join(results)
 
 def refresh_logs(): return log_capture.get_logs_as_str()
 
-with gr.Blocks(title="Tyrone ARS (Refactored)") as demo:
-    gr.Markdown("# 🧠 Tyrone ARS (Refactored)")
+with gr.Blocks(title="Tyrone ARS") as demo:
+    gr.Markdown("# 🧠 Tyrone ARS")
     with gr.Row():
         with gr.Column(scale=2):
             chatbot = gr.Chatbot(height=600, label="Interaction")

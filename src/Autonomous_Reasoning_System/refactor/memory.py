@@ -7,28 +7,36 @@ from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
 from fastembed import TextEmbedding
+from . import config
 
 logger = logging.getLogger("ARS_Memory")
 
 class MemorySystem:
-    def __init__(self, db_path="data/memory.duckdb"):
+    """
+    The Vault (FastEmbed Edition + Config + Batching).
+    """
+
+    def __init__(self, db_path=config.MEMORY_DB_PATH):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        print(f"[Memory] ⏳ Loading FastEmbed (CPU)...")
+        print(f"[Memory] Loading FastEmbed from config: {config.EMBEDDING_MODEL_NAME}...")
         start_t = time.time()
-        self.embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-        self.vector_dim = 384 
+        self.embedder = TextEmbedding(model_name=config.EMBEDDING_MODEL_NAME)
+        self.vector_dim = config.VECTOR_DIMENSION
         print(f"[Memory] ✅ Model loaded ({time.time() - start_t:.2f}s)")
 
         self._lock = threading.RLock()
-        print(f"[Memory] ⏳ Connecting to DuckDB...")
+        print(f"[Memory] ⏳ Connecting to DuckDB at {self.db_path}...")
         self.con = duckdb.connect(str(self.db_path))
+        
         self._init_schema()
         print(f"[Memory] ✅ Database Ready.")
 
     def _get_embedding(self, text: str) -> list:
-        return list(self.embedder.embed([text]))[0].tolist()
+        # FastEmbed returns a generator of embeddings — take first, convert to list
+        embedding = next(self.embedder.embed([text]))
+        return embedding.tolist() if hasattr(embedding, 'tolist') else list(embedding)
 
     def _init_schema(self):
         with self._lock:
@@ -44,59 +52,36 @@ class MemorySystem:
             self.con.execute("CREATE TABLE IF NOT EXISTS triples (subject VARCHAR, relation VARCHAR, object VARCHAR, PRIMARY KEY(subject, relation, object))")
             self.con.execute("CREATE TABLE IF NOT EXISTS plans (id VARCHAR PRIMARY KEY, goal_text VARCHAR, steps JSON, status VARCHAR, created_at TIMESTAMP, updated_at TIMESTAMP)")
 
-    # --- DEBUGGED BATCH METHOD ---
     def remember_batch(self, texts: list, memory_type: str = "episodic", importance: float = 0.5, source: str = "user", metadata_list: list = None):
         if not texts: return
         
-        count = len(texts)
-        print(f"\n[Memory-Debug] 🏁 Starting Batch Insert of {count} items...")
-        total_start = time.time()
-        
-        # 1. Calculate Vectors
-        t0 = time.time()
-        print(f"[Memory-Debug]    🧠 Calculating {count} vectors on CPU...")
-        # FastEmbed handles lists natively
-        embeddings_generator = self.embedder.embed(texts)
-        # Convert generator to list immediately to measure calculation time
-        embeddings = list(embeddings_generator) 
-        t_embed = time.time() - t0
-        print(f"[Memory-Debug]    ✅ Vectors calculated in {t_embed:.2f}s ({(t_embed/count)*1000:.1f}ms per item)")
-
-        # 2. DB Write
-        t1 = time.time()
-        print(f"[Memory-Debug]    💾 Writing to DuckDB transaction...")
+        print(f"[Memory] ⏳ Batch processing {len(texts)} items...")
+        t_start = time.time()
+        embeddings = list(self.embedder.embed(texts))
         
         now = datetime.utcnow()
-        
         with self._lock:
             self.con.execute("BEGIN TRANSACTION")
             try:
-                # Prepare data for bulk insertion logic (loop in python, execute in SQL)
                 for i, text in enumerate(texts):
                     mem_id = str(uuid4())
                     vector = embeddings[i].tolist()
                     meta = metadata_list[i] if metadata_list and i < len(metadata_list) else {}
                     meta_json = json.dumps(meta)
 
-                    self.con.execute(
-                        "INSERT INTO memory VALUES (?, ?, ?, ?, ?, ?, ?)", 
-                        (mem_id, text, memory_type, now, importance, source, meta_json)
-                    )
-                    self.con.execute(
-                        "INSERT INTO vectors VALUES (?, ?)", 
-                        (mem_id, vector)
-                    )
+                    self.con.execute("INSERT INTO memory VALUES (?, ?, ?, ?, ?, ?, ?)", (mem_id, text, memory_type, now, importance, source, meta_json))
+                    self.con.execute("INSERT INTO vectors VALUES (?, ?)", (mem_id, vector))
+                    
+                    if meta.get('kg_triples'):
+                        for s, r, o in meta['kg_triples']:
+                            self.add_triple(s, r, o)
                 self.con.execute("COMMIT")
+                print(f"[Memory] ✅ Batch saved in {time.time() - t_start:.2f}s")
             except Exception as e:
                 self.con.execute("ROLLBACK")
-                print(f"[Memory-Debug] ❌ Batch DB Write Failed: {e}")
+                print(f"[Memory] ❌ Batch failed: {e}")
                 raise e
-        
-        t_write = time.time() - t1
-        print(f"[Memory-Debug]    ✅ DB Write finished in {t_write:.2f}s")
-        print(f"[Memory-Debug] 🏁 Total Batch Time: {time.time() - total_start:.2f}s\n")
 
-    # --- Standard Methods ---
     def remember(self, text: str, memory_type: str = "episodic", importance: float = 0.5, source: str = "user", metadata: dict = None):
         return self.remember_batch([text], memory_type, importance, source, [metadata] if metadata else None)
 
@@ -131,8 +116,7 @@ class MemorySystem:
 
     def get_triples(self, entity: str):
         with self._lock:
-            res = self.con.execute("SELECT subject, relation, object FROM triples WHERE subject=? OR object=?", (entity.lower(), entity.lower())).fetchall()
-        return res
+            return self.con.execute("SELECT subject, relation, object FROM triples WHERE subject=? OR object=?", (entity.lower(), entity.lower())).fetchall()
         
     def get_active_plans(self):
         with self._lock:
@@ -144,5 +128,8 @@ class MemorySystem:
             res = self.con.execute("SELECT text FROM memory ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [r[0] for r in res]
 
-def get_memory_system(db_path="data/memory.duckdb"):
-    return MemorySystem(db_path)
+# --- THIS WAS THE MISSING PART ---
+def get_memory_system(db_path=None):
+    # If path not provided, use config default
+    path = db_path or config.MEMORY_DB_PATH
+    return MemorySystem(db_path=path)

@@ -87,18 +87,30 @@ class Reflector:
         """
         Drift Correction.
         Reduces importance of memories that haven't been accessed recently.
+        Uses a timed lock acquisition to prevent deadlocks with foreground processes.
         """
         logger.info("📉 Running memory decay...")
-        with self.memory._lock:
-            # DuckDB SQL to multiply importance
-            # We treat 'NULL' as 0.5 default
-            self.memory.con.execute(f"""
-                UPDATE memory 
-                SET importance = importance * {1.0 - decay_rate}
-                WHERE memory_type != 'fact' 
-                AND importance > 0.1
-            """)
-        return "Memory decay applied."
+        
+        # Attempt to acquire the MemorySystem lock with a 5-second timeout
+        if self.memory._lock.acquire(timeout=5):
+            try:
+                # DuckDB SQL to multiply importance
+                self.memory.con.execute(f"""
+                    UPDATE memory 
+                    SET importance = importance * {1.0 - decay_rate}
+                    WHERE memory_type != 'fact' 
+                    AND importance > 0.1
+                """)
+                return "Memory decay applied."
+            except Exception as e:
+                logger.error(f"Decay failed: {e}")
+                return "Decay failed."
+            finally:
+                # Always release the lock, even if an exception occurred
+                self.memory._lock.release()
+        else:
+            logger.warning("Skipping decay: Memory lock timeout.")
+            return "Skipping decay."
 
 # Factory pattern
 def get_reflector(memory_system, llm_engine):

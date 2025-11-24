@@ -17,7 +17,7 @@ logger = logging.getLogger("ARS_Brain")
 
 # Config defaults (fall back to config module for host/model)
 OLLAMA_BASE = getattr(config, "OLLAMA_API_BASE", "http://localhost:11434/api")
-DEFAULT_MODEL = getattr(config, "LLM_MODEL", "granite4:3b")
+DEFAULT_MODEL = getattr(config, "LLM_MODEL", "granite4:1b")
 TAGS_TIMEOUT = 5
 WARMUP_TIMEOUT = 15
 REQUEST_TIMEOUT = 90  # Trimmed to avoid long hangs during planning
@@ -96,6 +96,18 @@ class LLMEngine:
             return f"[Error: LLM unavailable - {e}]"
 
 class Brain:
+
+    def _warmup_memory(self):
+        """Forces the RAG system to run a trivial vector search to load VSS indices and Embedder resources."""
+        print("[Brain] 🔥 Warming up RAG/Memory System...")
+        start_t = time.time()
+        try:
+            # Running a simple context retrieval forces the Embedder and DuckDB VSS to load cold resources.
+            self.retrieval.get_context_string("quick test query for memory warmup", include_history=None)
+            print(f"[Brain] ✅ RAG/Memory Warmed up ({time.time() - start_t:.2f}s).")
+        except Exception as e:
+            print(f"[Brain] ⚠️ RAG Warmup failed: {e}")
+
     def __init__(self):
         print("\n[Brain] 🟢 Initializing Brain...")
         start_t = time.time()
@@ -104,7 +116,8 @@ class Brain:
         self.llm = LLMEngine()
         self.plugins = {}
         self.reflector = get_reflector(self.memory, self.llm)
-        #self._start_maintenance_loop()
+        self._warmup_memory()
+        self._start_maintenance_loop()
         self._register_basic_tools()
         print(f"[Brain] ✅ Brain Ready (Total startup: {time.time() - start_t:.2f}s)\n")
 

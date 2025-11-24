@@ -283,7 +283,9 @@ class Brain:
 
     def _handle_planning(self, text: str) -> str:
         try:
+            print("[Brain] 🟢 Loading Planner...")
             from .plan_builder import get_planner
+            print(f"[Brain] 📝 Delegating to Planner: '{text}'")
             # Pass the retrieval system to the planner factory function
             return get_planner(self.memory, self.llm, self.retrieval).process_request(text)
         except Exception as e:

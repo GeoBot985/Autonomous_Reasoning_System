@@ -2,12 +2,12 @@
 # This one works. No hangs. No missing returns. No 15s timeouts killing everything.
 
 import json
-import logging
+# Removed logging to prevent potential deadlocks/hangs in custom logging handlers
 import time
 from uuid import uuid4
 from typing import List
 
-logger = logging.getLogger("ARS_Planner")
+# logger = logging.getLogger("ARS_Planner")  <-- REMOVED
 
 
 class Planner:
@@ -17,14 +17,15 @@ class Planner:
         self.retrieval = retrieval_system
 
     def process_request(self, user_request: str) -> str:
-        logger.info("[Planner] New planning request: %s", user_request)
+        # Replaced logger.info with print
+        print(f"[Planner] New planning request: {user_request}")
 
         # 1. Decompose the goal into steps
         steps = self._decompose_goal(user_request)
         if not steps or len(steps) == 0:
             return "I couldn't break this request into steps. I'll answer directly instead."
 
-        logger.info("[Planner] Plan created with %d steps: %s", len(steps), steps)
+        print(f"[Planner] Plan created with {len(steps)} steps: {steps}")
 
         # 2. Save plan
         plan_id = str(uuid4())
@@ -48,7 +49,7 @@ class Planner:
             )
             response = response.strip()
             if response.startswith("[Error"):
-                logger.error("[Planner] Decomposition failed: %s", response)
+                print(f"[Planner] Decomposition failed: {response}")
                 return []
 
             # Clean common garbage
@@ -56,14 +57,14 @@ class Planner:
             steps = json.loads(response)
             return [s.strip() for s in steps if s.strip()][:6]
         except Exception as e:
-            logger.error("[Planner] Failed to parse steps: %s", e)
+            print(f"[Planner] Failed to parse steps: {e}")
             return []
 
     def _execute_plan(self, plan_id: str, goal: str, steps: List[str]) -> str:
         workspace: dict = {}
 
         for idx, step in enumerate(steps, 1):
-            logger.info("[Planner] Executing step %d/%d: %s", idx, len(steps), step)
+            print(f"[Planner] Executing step {idx}/{len(steps)}: {step}")
 
             # Build context only when needed
             context_lines = [f"OVERALL GOAL: {goal}"]
@@ -92,7 +93,7 @@ class Planner:
             # Immediate fail if LLM died
             if step_result.startswith("[Error") or "unavailable" in step_result.lower():
                 error = f"Stopped at step {idx}/{len(steps)} — model is too slow or unreachable right now."
-                logger.error(error)
+                print(error)
                 self.memory.update_plan(plan_id, goal, steps, status="failed")
                 return error + " Try again in a minute."
 
@@ -100,7 +101,7 @@ class Planner:
             self.memory.update_plan(plan_id, goal, steps, status=f"step_{idx}/{len(steps)}")
 
         # Final answer — OUTSIDE the loop
-        logger.info("[Planner] All steps complete. Generating final answer...")
+        print("[Planner] All steps complete. Generating final answer...")
         final = self.llm.generate(
             f"User goal: {goal}\n\nGive a clear, natural final answer using only the results below.",
             system="Synthesize the results into a helpful response. Do NOT mention steps or planning.\n\n"

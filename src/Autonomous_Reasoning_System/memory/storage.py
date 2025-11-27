@@ -12,7 +12,7 @@ from Autonomous_Reasoning_System import config
 
 logger = logging.getLogger("ARS_Memory")
 
-class MemorySystem:
+class MemoryStorage:
     """
     The Vault (FastEmbed Edition + Config + Batching).
     """
@@ -20,7 +20,7 @@ class MemorySystem:
     def __init__(self, db_path=config.MEMORY_DB_PATH):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         print(f"[Memory] Loading FastEmbed from config: {config.EMBEDDING_MODEL_NAME}...")
         start_t = time.time()
         self.embedder = TextEmbedding(model_name=config.EMBEDDING_MODEL_NAME)
@@ -30,7 +30,7 @@ class MemorySystem:
         self._lock = threading.RLock()
         print(f"[Memory] ⏳ Connecting to DuckDB at {self.db_path}...")
         self.con = duckdb.connect(str(self.db_path))
-        
+
         self._init_schema()
         print(f"[Memory] ✅ Database Ready.")
 
@@ -42,7 +42,7 @@ class MemorySystem:
     def _init_schema(self):
         with self._lock:
             try:
-                self.con.execute("INSTALL vss; LOAD vss;") 
+                self.con.execute("INSTALL vss; LOAD vss;")
                 self.con.execute("SET hnsw_enable_experimental_persistence = true;")
             except Exception: pass
 
@@ -55,11 +55,11 @@ class MemorySystem:
 
     def remember_batch(self, texts: list, memory_type: str = "episodic", importance: float = 0.5, source: str = "user", metadata_list: list = None):
         if not texts: return
-        
+
         print(f"[Memory] ⏳ Batch processing {len(texts)} items...")
         t_start = time.time()
         embeddings = list(self.embedder.embed(texts))
-        
+
         now = datetime.utcnow()
         with self._lock:
             self.con.execute("BEGIN TRANSACTION")
@@ -67,16 +67,16 @@ class MemorySystem:
                 for i, text in enumerate(texts):
                     mem_id = str(uuid4())
                     vector = embeddings[i].tolist()
-                    
+
                     # --- CHANGE START: Ensure metadata exists and add chunk_index ---
                     meta = metadata_list[i] if metadata_list and i < len(metadata_list) else {}
-                    meta['chunk_index'] = i 
+                    meta['chunk_index'] = i
                     meta_json = json.dumps(meta)
                     # --- CHANGE END ---
 
                     self.con.execute("INSERT INTO memory VALUES (?, ?, ?, ?, ?, ?, ?)", (mem_id, text, memory_type, now, importance, source, meta_json))
                     self.con.execute("INSERT INTO vectors VALUES (?, ?)", (mem_id, vector))
-                    
+
                     if meta.get('kg_triples'):
                         for s, r, o in meta['kg_triples']:
                             self.add_triple(s, r, o)
@@ -86,27 +86,27 @@ class MemorySystem:
                 self.con.execute("ROLLBACK")
                 print(f"[Memory] ❌ Batch failed: {e}")
                 raise e
-            
+
     def get_whole_document(self, filename: str) -> str:
         """
-        Retrieves all chunks associated with a specific filename, 
+        Retrieves all chunks associated with a specific filename,
         ordered correctly, and joins them into a single string.
         """
         print(f"[Memory] 📖 Reassembling document: {filename}...")
         with self._lock:
-            # We sort by created_at (for different upload sessions) 
+            # We sort by created_at (for different upload sessions)
             # AND metadata->chunk_index (for order within a session)
             query = """
-                SELECT text 
-                FROM memory 
-                WHERE source = ? 
+                SELECT text
+                FROM memory
+                WHERE source = ?
                 ORDER BY created_at ASC, CAST(json_extract(metadata, '$.chunk_index') AS INTEGER) ASC
             """
             results = self.con.execute(query, (filename,)).fetchall()
-        
+
         if not results:
             return f"No document found with name: {filename}"
-            
+
         # Join chunks with a newline or space
         full_text = "\n".join([r[0] for r in results])
         return full_text
@@ -146,7 +146,7 @@ class MemorySystem:
     def get_triples(self, entity: str):
         with self._lock:
             return self.con.execute("SELECT subject, relation, object FROM triples WHERE subject=? OR object=?", (entity.lower(), entity.lower())).fetchall()
-        
+
     def get_active_plans(self):
         with self._lock:
             res = self.con.execute("SELECT * FROM plans WHERE status = 'active'").fetchall()
@@ -156,31 +156,31 @@ class MemorySystem:
         with self._lock:
             res = self.con.execute("SELECT text FROM memory ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [r[0] for r in res]
-    
+
     # --- memory.py patch (New Method for MemorySystem) ---
 
     def calculate_similarities(self, query: str, texts: List[str]) -> List[float]:
         """
-        Calculates cosine similarity between the query and a list of texts using 
+        Calculates cosine similarity between the query and a list of texts using
         the internal embedder. Returns a list of similarity scores.
         """
-        if not texts: 
+        if not texts:
             return []
-        
+
         # 1. Embed all texts in one batch (query first)
         all_embeddings = list(self.embedder.embed([query] + texts))
         query_vec = all_embeddings[0]
         text_vecs = all_embeddings[1:]
-        
+
         similarities = []
         for text_vec in text_vecs:
             # Cosine similarity for normalized vectors is the dot product.
             # Calculate dot product manually using list comprehension
             dot_product = sum(query_vec[i] * text_vec[i] for i in range(len(query_vec)))
-            similarities.append(float(dot_product)) 
-            
+            similarities.append(float(dot_product))
+
         return similarities
-    
+
 
 # --- THIS WAS THE MISSING PART ---
 def get_memory_system(db_path=None):

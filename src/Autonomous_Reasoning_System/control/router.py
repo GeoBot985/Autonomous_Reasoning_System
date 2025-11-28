@@ -139,6 +139,28 @@ class Router:
         Analyzes intent and determines the pipeline without executing it.
         Returns a dictionary containing intent, entities, and the selected pipeline.
         """
+        # --- NEW LOGIC: Check for explicit Web Search invocation ---
+        lower_text = text.lower().strip()
+        if lower_text.startswith("web search") or lower_text.startswith("search web"):
+            # Clean up the query
+            query = text[len("web search"):].strip()
+            if lower_text.startswith("search web"):
+                query = text[len("search web"):].strip()
+
+            # Remove punctuation prefix if any (like ":")
+            if query.startswith(":") or query.startswith("-"):
+                query = query[1:].strip()
+
+            return {
+                "intent": "web_search",
+                "family": IntentFamily.WEB_SEARCH,
+                "subtype": None,
+                "entities": {"query": query},
+                "analysis_data": {},
+                "pipeline": self._select_pipeline(IntentFamily.WEB_SEARCH, "web_search"),
+                "clean_text": query
+            }
+
         # 1. Analyze Intent
         analysis_result = self.dispatcher.dispatch("analyze_intent", arguments={"text": text})
 
@@ -242,6 +264,9 @@ class Router:
         entities = resolve_result["entities"]
         analysis_data = resolve_result["analysis_data"]
 
+        # Use clean text if provided (e.g. from web search override)
+        execution_text = resolve_result.get("clean_text", text)
+
         if pipeline_override:
             pipeline = pipeline_override
             intent = "override"
@@ -257,7 +282,7 @@ class Router:
             "analysis": analysis_data
         }
 
-        execution_result = self.execute_pipeline(pipeline, text, context)
+        execution_result = self.execute_pipeline(pipeline, execution_text, context)
 
         return {
             "intent": intent,

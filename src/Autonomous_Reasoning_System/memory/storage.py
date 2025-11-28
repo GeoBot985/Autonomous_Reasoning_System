@@ -186,4 +186,4 @@ class MemoryStorage:
 def get_memory_system(db_path=None):
     # If path not provided, use config default
     path = db_path or config.MEMORY_DB_PATH
-    return MemorySystem(db_path=path)
+    return MemoryStorage(db_path=path)

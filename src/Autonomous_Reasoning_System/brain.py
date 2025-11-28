@@ -9,6 +9,7 @@ from typing import Optional, List
 
 from . import config
 from .memory import get_memory_system
+from .tools.web_search import perform_google_search
 from .retrieval import RetrievalSystem
 from .reflection import get_reflector
 
@@ -140,6 +141,8 @@ class Brain:
     def think(self, user_input: str, history: List[dict] = None) -> str:
         if not user_input or not user_input.strip(): return ""
         text = user_input.strip()
+        if self._is_web_search_query(text):
+            return self._handle_web_search(text)
         
         plugin_response = self._check_plugins(text)
         if plugin_response: return plugin_response
@@ -182,6 +185,10 @@ class Brain:
         if any(x in lower for x in ["plan a", "create a goal", "how do i", "research"]):
             return "plan", {}
 
+        # 2.5. Treat quick web-search prompts as RAG queries.
+        if lower.startswith("web search"):
+            return "chat", {}
+
         # 3. RAG / Action Commands (The Fix!)
         # If it starts with an imperative verb, it is a request for output (Chat), not input (Store).
         rag_verbs = ["summarize", "explain", "describe", "list", "show", "find", "search", "define", "tell"]
@@ -215,6 +222,34 @@ class Brain:
             return f"✅ Saved fact and extracted knowledge: {kg_triples}"
         else:
             return f"✅ Saved: '{clean_text}'"
+
+    def _is_web_search_query(self, text: str) -> bool:
+        lower = text.lower().strip()
+        return lower.startswith("web search") or lower.startswith("search web")
+
+    def _handle_web_search(self, text: str) -> str:
+        query = text
+        lower = text.lower()
+
+        if ":" in text:
+            prefix, remainder = text.split(":", 1)
+            if prefix.lower().strip() in {"web search", "search web"}:
+                query = remainder.strip()
+        elif lower.startswith("web search"):
+            query = text[len("web search"):].strip()
+        elif lower.startswith("search web"):
+            query = text[len("search web"):].strip()
+
+        query = query.strip()
+        if not query:
+            return "Please tell me what you'd like me to search for."
+
+        try:
+            result = perform_google_search(query)
+            return f"Web search result for '{query}':\n{result}"
+        except Exception as exc:
+            logger.error(f"Web search failed: {exc}", exc_info=True)
+            return "I tried to perform the web search but something went wrong."
 
     def _extract_triples_via_llm(self, text: str) -> List[tuple]:
         print(f"[Brain] 🕸️ Extracting KG Triples for: '{text}'")

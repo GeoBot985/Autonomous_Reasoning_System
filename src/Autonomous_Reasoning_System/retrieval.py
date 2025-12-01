@@ -2,17 +2,17 @@ import re
 import datetime
 import time
 import logging
-from typing import List
-from .memory import MemorySystem
+from typing import List, Optional, Set
+from .memory import MemoryStorage
 
 logger = logging.getLogger("ARS_Retrieval")
 
 class RetrievalSystem:
-    def __init__(self, memory_system: MemorySystem):
+    def __init__(self, memory_system: MemoryStorage):
         self.memory = memory_system
         
         # EXPANDED STOPWORDS (Crucial for filtering "tell me about")
-        self.stop_words = {
+        self.stop_words: Set[str] = {
             "the", "is", "at", "which", "on", "a", "an", "and", "or", "but", 
             "if", "then", "else", "when", "where", "who", "what", "how", 
             "do", "does", "did", "can", "could", "should", "would", "to", "from",
@@ -22,21 +22,16 @@ class RetrievalSystem:
             "good", "great", "perfect", "nice", "cool", "ok", "okay", "awesome",
             "yes", "no", "sure", "right", "correct", "done", "fine",
             "stuff", "thing", "things", "something", "anything",
-            # NEW ADDITIONS:
             "tell", "me", "you", "your", "my", "mine", "us", "we", "know", "find"
         }
         
-        self.generic_terms = {
+        self.generic_terms: Set[str] = {
             "birthday", "born", "date", "time", "schedule", "plan", "detail", 
             "info", "information", "remember", "remind", "note"
         }
 
-    # --- retrieval.py patch (Full get_context_string method) ---
-
-    # --- retrieval.py patch (Full get_context_string method) ---
-
-    def get_context_string(self, query: str, include_history: List[str] = None) -> str:
-        print(f"[Retrieval] 🟢 Building context for: '{query}'")
+    def get_context_string(self, query: str, include_history: Optional[List[str]] = None) -> str:
+        logger.debug(f"Building context for: '{query}'")
         start_t = time.time()
         
         context_lines = ["### SYSTEM CONTEXT ###"]
@@ -44,11 +39,11 @@ class RetrievalSystem:
         context_lines.append("Location: Cape Town, Western Cape, South Africa") 
 
         keywords = self._extract_keywords_fast(query)
-        print(f"[Retrieval]    🔑 Keywords: {keywords}")
+        logger.debug(f"Keywords: {keywords}")
         
         # --- Handle Trivial Queries ---
         if not keywords:
-            print(f"[Retrieval]    🚀 Trivial query — skipping heavy search")
+            logger.debug("Trivial query — skipping heavy search")
             if include_history:
                 context_lines.append("\n### RELEVANT CONVERSATION HISTORY ###")
                 context_lines.extend(include_history[-1:]) 
@@ -56,7 +51,7 @@ class RetrievalSystem:
         
         # --- Memory Retrieval (RAG) ---
         facts = self._retrieve_deterministic(keywords)
-        print(f"[Retrieval]    📂 Facts found: {len(facts)}")
+        logger.debug(f"Facts found: {len(facts)}")
         
         # --- NEW LOGIC: Strengthen Vector Query ---
         vector_query = query
@@ -64,14 +59,14 @@ class RetrievalSystem:
             # Join relevant facts (avoiding overly long ones) to strengthen the query sent to the embedder.
             fact_context = " ".join([f for f in facts if len(f) < 200]) 
             vector_query = f"{query}. CONTEXT HINT: {fact_context}"
-            print(f"[Retrieval]    ⭐ Query strengthened by facts for vector search.")
+            logger.debug("Query strengthened by facts for vector search.")
         
         limit = 1 if facts else 3
-        print(f"[Retrieval]    🧠 Requesting vectors...")
+        logger.debug("Requesting vectors...")
         vec_start = time.time()
         # Use the potentially strengthened query for embedding
         vectors = self.memory.search_similar(vector_query, limit=limit, threshold=0.35)
-        print(f"[Retrieval]    ✅ Vectors: {len(vectors)} ({time.time() - vec_start:.2f}s)")
+        logger.debug(f"Vectors: {len(vectors)} ({time.time() - vec_start:.2f}s)")
 
         if facts or vectors:
             context_lines.append("\n### RELEVANT MEMORY (FACTS) ###")
@@ -130,7 +125,7 @@ class RetrievalSystem:
                 # We still limit to 5 overall, but the two most recent are prioritized within that limit.
                 context_lines.extend(filtered_history[-5:])
 
-        print(f"[Retrieval] 🏁 Context built ({time.time() - start_t:.2f}s)")
+        logger.debug(f"Context built ({time.time() - start_t:.2f}s)")
         return "\n".join(context_lines)
 
     def _retrieve_deterministic(self, keywords: List[str]) -> List[str]:
@@ -139,17 +134,17 @@ class RetrievalSystem:
         
         if strong_keywords:
             search_terms = strong_keywords
-            print(f"[Retrieval]    🎯 Strategy: Specific Entities Only {search_terms}")
+            logger.debug(f"Strategy: Specific Entities Only {search_terms}")
         else:
             search_terms = keywords
-            print(f"[Retrieval]    🔍 Strategy: Broad Search {search_terms}")
+            logger.debug(f"Strategy: Broad Search {search_terms}")
 
         for kw in search_terms:
-            # 1. Get Triples (The fix is here)
+            # 1. Get Triples
             triples = self.memory.get_triples(kw)
             for t in triples[:3]:
                 # Convert ('cornelia', 'has_birthday', '22 november') -> "cornelia has_birthday 22 november"
-                if isinstance(t, tuple) or isinstance(t, list):
+                if isinstance(t, (tuple, list)):
                     results.append(f"{t[0]} {t[1]} {t[2]}")
                 else:
                     results.append(str(t))

@@ -1,31 +1,27 @@
-# plan_builder.py — FINAL WORKING VERSION (Dec 2025)
-# This one works. No hangs. No missing returns. No 15s timeouts killing everything.
-
 import json
-# Removed logging to prevent potential deadlocks/hangs in custom logging handlers
+import logging
 import time
 from uuid import uuid4
-from typing import List
+from typing import List, Optional, Any
 
-# logger = logging.getLogger("ARS_Planner")  <-- REMOVED
-
+# Configure logger
+logger = logging.getLogger("ARS_Planner")
 
 class Planner:
-    def __init__(self, memory_system, llm_engine, retrieval_system):
+    def __init__(self, memory_system: Any, llm_engine: Any, retrieval_system: Any):
         self.memory = memory_system
         self.llm = llm_engine
         self.retrieval = retrieval_system
 
     def process_request(self, user_request: str) -> str:
-        # Replaced logger.info with print
-        print(f"[Planner] New planning request: {user_request}")
+        logger.info(f"New planning request: {user_request}")
 
         # 1. Decompose the goal into steps
         steps = self._decompose_goal(user_request)
-        if not steps or len(steps) == 0:
+        if not steps:
             return "I couldn't break this request into steps. I'll answer directly instead."
 
-        print(f"[Planner] Plan created with {len(steps)} steps: {steps}")
+        logger.info(f"Plan created with {len(steps)} steps: {steps}")
 
         # 2. Save plan
         plan_id = str(uuid4())
@@ -45,26 +41,28 @@ class Planner:
                 goal,
                 system=system,
                 temperature=0.1,
-                # Critical: give the model time to think
             )
             response = response.strip()
             if response.startswith("[Error"):
-                print(f"[Planner] Decomposition failed: {response}")
+                logger.error(f"Decomposition failed: {response}")
                 return []
 
             # Clean common garbage
-            response = response.replace("```json", "").replace("```", "").strip()
-            steps = json.loads(response)
-            return [s.strip() for s in steps if s.strip()][:6]
+            cleaned_response = response.replace("```json", "").replace("```", "").strip()
+            steps = json.loads(cleaned_response)
+
+            if isinstance(steps, list):
+                return [str(s).strip() for s in steps if str(s).strip()][:6]
+            return []
         except Exception as e:
-            print(f"[Planner] Failed to parse steps: {e}")
+            logger.error(f"Failed to parse steps: {e}")
             return []
 
     def _execute_plan(self, plan_id: str, goal: str, steps: List[str]) -> str:
         workspace: dict = {}
 
         for idx, step in enumerate(steps, 1):
-            print(f"[Planner] Executing step {idx}/{len(steps)}: {step}")
+            logger.info(f"Executing step {idx}/{len(steps)}: {step}")
 
             # Build context only when needed
             context_lines = [f"OVERALL GOAL: {goal}"]
@@ -75,7 +73,8 @@ class Planner:
                     context_lines.append(f"- {k}: {short}")
 
             # Add memory only for research-type steps
-            if any(word in step.lower() for word in ["find", "search", "look", "recall", "check", "what", "where"]):
+            search_keywords = ["find", "search", "look", "recall", "check", "what", "where"]
+            if any(word in step.lower() for word in search_keywords):
                 mem = self.retrieval.get_context_string(step, include_history=None)
                 if len(mem) > 12_000:
                     mem = mem[:12_000] + "\n\n... [truncated]"
@@ -93,7 +92,7 @@ class Planner:
             # Immediate fail if LLM died
             if step_result.startswith("[Error") or "unavailable" in step_result.lower():
                 error = f"Stopped at step {idx}/{len(steps)} — model is too slow or unreachable right now."
-                print(error)
+                logger.error(error)
                 self.memory.update_plan(plan_id, goal, steps, status="failed")
                 return error + " Try again in a minute."
 
@@ -101,7 +100,7 @@ class Planner:
             self.memory.update_plan(plan_id, goal, steps, status=f"step_{idx}/{len(steps)}")
 
         # Final answer — OUTSIDE the loop
-        print("[Planner] All steps complete. Generating final answer...")
+        logger.info("All steps complete. Generating final answer...")
         final = self.llm.generate(
             f"User goal: {goal}\n\nGive a clear, natural final answer using only the results below.",
             system="Synthesize the results into a helpful response. Do NOT mention steps or planning.\n\n"
@@ -118,5 +117,5 @@ class Planner:
         return final
 
 
-def get_planner(memory_system, llm_engine, retrieval_system):
+def get_planner(memory_system: Any, llm_engine: Any, retrieval_system: Any) -> Planner:
     return Planner(memory_system, llm_engine, retrieval_system)

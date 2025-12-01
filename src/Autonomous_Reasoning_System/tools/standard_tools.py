@@ -289,6 +289,9 @@ def register_tools(dispatcher, components: Dict[str, Any]):
 
     # 13. Google Search
     def google_search_handler(text: str, **kwargs):
+        """
+        Handler for Google Search intent using Playwright.
+        """
         from Autonomous_Reasoning_System.tools.web_search import perform_google_search
         return perform_google_search(text)
 

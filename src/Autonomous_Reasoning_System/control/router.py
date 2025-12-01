@@ -273,6 +273,8 @@ class Router:
             logger.info(f"Using overridden pipeline: {pipeline}")
         else:
             pipeline = resolve_result["pipeline"]
+            if family == IntentFamily.WEB_SEARCH:
+                logger.info(f"Routing to Web Search pipeline for query: '{text}'")
             logger.info(f"Routing intent: {intent} (Family: {family}), Selected pipeline: {pipeline}")
 
         context = {

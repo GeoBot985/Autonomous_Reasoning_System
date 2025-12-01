@@ -38,3 +38,4 @@ src/data/memory.duckdb
 src/consolidated_app.py
 src/consolidated_app.py
 src/consolidated_app.py
+src/start_tyrone.ps1

@@ -4,6 +4,8 @@ import time
 from uuid import uuid4
 from typing import List, Optional, Any
 
+from Autonomous_Reasoning_System.models import Plan, PlanStatus
+
 # Configure logger
 logger = logging.getLogger("ARS_Planner")
 
@@ -25,7 +27,7 @@ class Planner:
 
         # 2. Save plan
         plan_id = str(uuid4())
-        self.memory.update_plan(plan_id, user_request, steps, status="active")
+        self.memory.update_plan(plan_id, user_request, steps, status=PlanStatus.ACTIVE.value)
 
         # 3. Execute every step
         result = self._execute_plan(plan_id, user_request, steps)
@@ -93,7 +95,7 @@ class Planner:
             if step_result.startswith("[Error") or "unavailable" in step_result.lower():
                 error = f"Stopped at step {idx}/{len(steps)} — model is too slow or unreachable right now."
                 logger.error(error)
-                self.memory.update_plan(plan_id, goal, steps, status="failed")
+                self.memory.update_plan(plan_id, goal, steps, status=PlanStatus.FAILED.value)
                 return error + " Try again in a minute."
 
             workspace[f"Step {idx}: {step}"] = step_result
@@ -108,7 +110,7 @@ class Planner:
             temperature=0.4
         )
 
-        self.memory.update_plan(plan_id, goal, steps, status="completed")
+        self.memory.update_plan(plan_id, goal, steps, status=PlanStatus.COMPLETED.value)
         self.memory.remember(
             f"Completed plan → {goal}\nAnswer: {final}",
             memory_type="plan_summary",

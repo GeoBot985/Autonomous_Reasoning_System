@@ -91,53 +91,53 @@ def start_heartbeat_with_plans(learner, confidence, plan_builder, interval_secon
                     # --- every few pulses, check active plans ---
                     counter += 1
                     if counter % 3 == 0:  # e.g. every 3 heartbeats
-                        active = plan_builder.get_active_plans()
+                        # Check if plan_builder has get_active_plans, otherwise use memory
+                        if hasattr(plan_builder, 'get_active_plans'):
+                            active = plan_builder.get_active_plans()
+                        else:
+                            active = plan_builder.memory.get_active_plans()
+
                         if active:
                             logger.info(f"[📋 ACTIVE PLANS] {len(active)} ongoing:")
                             for plan in active:
-                                prog = plan.progress_summary()
-                                logger.info(f"   • {plan.title}: {prog['completed_steps']}/{prog['total_steps']} steps complete.")
+                                # Determine progress (simple approximation based on status string)
+                                progress_desc = f"{len(plan.steps)} steps"
+
+                                logger.info(f"   • {plan.goal}: Status {plan.status} ({progress_desc})")
 
                                 # 🧠 store reflection reminder
-                                plan_builder.memory.add_memory(
-                                    text=f"Reminder: Continue plan '{plan.title}'. Current step: {prog['current_step']}.",
-                                    memory_type="plan_reminder",
-                                    importance=0.3,
-                                    source="Scheduler"
-                                )
+                                # Use memory directly if available (MemoryStorage has 'remember')
+                                mem = getattr(plan_builder, "memory", None)
+                                if mem and hasattr(mem, "remember"):
+                                    mem.remember(
+                                        text=f"Reminder: Continue plan '{plan.goal}'. Status: {plan.status}.",
+                                        memory_type="plan_reminder",
+                                        importance=0.3,
+                                        source="Scheduler"
+                                    )
 
                                 # 🤖 attempt next step automatically
-                                next_step = plan.next_step()
-                                if next_step and next_step.status == "pending":
-                                    logger.info(f"[🤖 EXECUTOR] Running next step for '{plan.title}': {next_step.description}")
+                                if plan_executor:
+                                     logger.info(f"[🤖 EXECUTOR] Attempting execution for '{plan.goal}'")
+                                     # Use PlanExecutor's new execute_next_step method
+                                     exec_res = plan_executor.execute_next_step(plan.id)
 
-                                    result_status = "failed"
-                                    result_output = "No executor available"
+                                     status = exec_res.get("status")
+                                     result_output = ""
 
-                                    if plan_executor:
-                                         # Use PlanExecutor's new execute_next_step method
-                                         exec_res = plan_executor.execute_next_step(plan.id)
+                                     if status == "complete":
+                                          result_output = "Plan finished!"
+                                     elif status == "running":
+                                          result_output = f"Step completed: {exec_res.get('step_completed')}"
+                                     elif status == "suspended":
+                                          result_output = f"Suspended: {exec_res.get('errors')}"
+                                     else:
+                                          result_output = str(exec_res.get("errors"))
 
-                                         status = exec_res.get("status")
-                                         if status == "complete":
-                                              result_status = "complete"
-                                              result_output = "Plan finished!"
-                                         elif status == "running":
-                                              result_status = "running"
-                                              result_output = f"Step completed: {exec_res.get('step_completed')}"
-                                         elif status == "suspended":
-                                              result_status = "suspended"
-                                              result_output = f"Suspended: {exec_res.get('errors')}"
-                                         else:
-                                              result_status = "failed"
-                                              result_output = str(exec_res.get("errors"))
-                                    else:
-                                         # Fallback/Dummy
-                                         result_status = "failed"
-                                         result_output = "PlanExecutor missing"
-
-                                    # Plan updates are handled inside plan_executor usually.
-                                    logger.info(f"[🤖 EXECUTOR] Result: {result_status}")
+                                     logger.info(f"[🤖 EXECUTOR] Result: {status} - {result_output}")
+                                else:
+                                     # Fallback: Just log if no executor
+                                     logger.warning(f"[🤖 EXECUTOR] Skipping execution for '{plan.goal}' (No executor available)")
 
                         else:
                             logger.info("[📋 ACTIVE PLANS] None currently active.")

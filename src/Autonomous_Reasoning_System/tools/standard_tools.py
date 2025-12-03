@@ -1,5 +1,15 @@
 import logging
 from typing import Dict, Any, List
+from Autonomous_Reasoning_System.tools.web_search import perform_google_search
+# Try to import these top-level, assuming circularity is fixed via models
+try:
+    from Autonomous_Reasoning_System.tools.deterministic_responder import DeterministicResponder
+except ImportError:
+    pass # Still allow late import if this fails, though we expect it to work
+try:
+    from Autonomous_Reasoning_System.llm.context_adapter import ContextAdapter
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -113,8 +123,13 @@ def register_tools(dispatcher, components: Dict[str, Any]):
     def deterministic_responder_handler(text: str, **kwargs):
         responder = components.get("deterministic_responder")
         if not responder:
-            from Autonomous_Reasoning_System.tools.deterministic_responder import DeterministicResponder
-            responder = DeterministicResponder()
+            # Fallback to local import if top-level failed or wasn't tried (though we tried)
+            # Actually, let's trust the top level or lazy load if needed but cleanly.
+            try:
+                from Autonomous_Reasoning_System.tools.deterministic_responder import DeterministicResponder
+                responder = DeterministicResponder()
+            except ImportError:
+                return "DeterministicResponder not available."
         return responder.run(text)
 
     dispatcher.register_tool(
@@ -143,7 +158,6 @@ def register_tools(dispatcher, components: Dict[str, Any]):
     def answer_question_handler(text: str, **kwargs):
         adapter = components.get("context_adapter")
         if not adapter:
-            # Lazy import if not provided
             try:
                 from Autonomous_Reasoning_System.llm.context_adapter import ContextAdapter
                 adapter = ContextAdapter()
@@ -292,7 +306,6 @@ def register_tools(dispatcher, components: Dict[str, Any]):
         """
         Handler for Google Search intent using Playwright.
         """
-        from Autonomous_Reasoning_System.tools.web_search import perform_google_search
         return perform_google_search(text)
 
     dispatcher.register_tool(

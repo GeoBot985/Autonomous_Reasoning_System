@@ -90,8 +90,8 @@ def test_plan_persistence(memory_db):
     memory_db.update_plan(plan_id, goal, steps)
 
     plans = memory_db.get_active_plans()
-    found = next((p for p in plans if p['id'] == plan_id), None)
+    found = next((p for p in plans if p.id == plan_id), None)
 
     assert found is not None
-    assert found['goal'] == goal
-    assert found['steps'] == steps
+    assert found.goal == goal
+    assert found.steps == steps

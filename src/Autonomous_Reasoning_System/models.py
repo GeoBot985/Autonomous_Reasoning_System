@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional, Dict, Any, Union
 
@@ -34,11 +34,14 @@ class PlanStatus(str, Enum):
     FAILED = "failed"
     IN_PROGRESS = "in_progress" # generic in progress
 
+def utc_now():
+    return datetime.now(timezone.utc)
+
 @dataclass
 class Plan:
     id: str
     goal: str
     steps: List[str]
     status: Union[PlanStatus, str]
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)

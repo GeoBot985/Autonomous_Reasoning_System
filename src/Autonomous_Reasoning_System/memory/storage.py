@@ -2,7 +2,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Any, Dict
 from uuid import uuid4
@@ -90,7 +90,7 @@ class MemoryStorage:
         t_start = time.time()
         embeddings = list(self.embedder.embed(texts))
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         with self._lock:
             self.con.execute("BEGIN TRANSACTION")
             try:
@@ -157,7 +157,7 @@ class MemoryStorage:
         )
 
     def update_plan(self, plan_id: str, goal_text: str, steps: List[str], status: str = "active") -> None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         steps_json = json.dumps(steps)
         with self._lock:
             if self.con.execute("SELECT 1 FROM plans WHERE id=?", (plan_id,)).fetchone():

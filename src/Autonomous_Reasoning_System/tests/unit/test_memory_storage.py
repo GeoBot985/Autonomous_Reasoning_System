@@ -11,9 +11,30 @@ def mock_duckdb():
         yield mock_con
 
 @pytest.fixture
-def memory_storage(mock_duckdb, mock_embedding_model):
-    with patch('Autonomous_Reasoning_System.memory.storage.TextEmbedding', return_value=mock_embedding_model):
+def memory_storage(mock_duckdb):
+    # TextEmbedding is now globally mocked in conftest.py,
+    # but we can still patch it if we need specific return values for this unit test file.
+    # However, since we don't have a 'mock_embedding_model' fixture defined in this file,
+    # we should rely on the conftest one or mock it locally if needed.
+    # For now, let's just use the global one or simple patch.
+    with patch('Autonomous_Reasoning_System.memory.storage.TextEmbedding') as MockEmbed:
+        # Configure the mock to return a mock instance
+        mock_instance = MagicMock()
+        # Mock embed method to return a generator of a list (as expected by _get_embedding)
+        # It needs to return a generator that yields something that has .tolist() or is a list
+        def side_effect(texts):
+            for _ in texts:
+                # yield a mock object that has tolist()
+                m = MagicMock()
+                m.tolist.return_value = [0.1] * 384
+                yield m
+
+        mock_instance.embed.side_effect = side_effect
+        MockEmbed.return_value = mock_instance
+
         storage = MemoryStorage(db_path=":memory:")
+        # We need to ensure the storage uses our configured mock instance
+        storage.embedder = mock_instance
         return storage
 
 def test_init_schema(memory_storage, mock_duckdb):

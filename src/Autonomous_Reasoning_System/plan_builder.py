@@ -5,6 +5,12 @@ from uuid import uuid4
 from typing import List, Optional, Any
 
 from Autonomous_Reasoning_System.models import Plan, PlanStatus
+from .utils.json_utils import parse_llm_json
+from .prompts import (
+    PLAN_DECOMPOSITION_PROMPT,
+    PLAN_STEP_EXECUTION_SYSTEM,
+    PLAN_FINAL_ANSWER_SYSTEM
+)
 
 # Configure logger
 logger = logging.getLogger("ARS_Planner")
@@ -34,14 +40,10 @@ class Planner:
         return result
 
     def _decompose_goal(self, goal: str) -> List[str]:
-        system = (
-            "Break the user request into 3–6 short, clear, actionable steps. "
-            "Return ONLY a JSON array of strings. No explanations, no markdown."
-        )
         try:
             response = self.llm.generate(
                 goal,
-                system=system,
+                system=PLAN_DECOMPOSITION_PROMPT,
                 temperature=0.1,
             )
             response = response.strip()
@@ -49,9 +51,8 @@ class Planner:
                 logger.error(f"Decomposition failed: {response}")
                 return []
 
-            # Clean common garbage
-            cleaned_response = response.replace("```json", "").replace("```", "").strip()
-            steps = json.loads(cleaned_response)
+            # Use unified JSON parser
+            steps = parse_llm_json(response)
 
             if isinstance(steps, list):
                 return [str(s).strip() for s in steps if str(s).strip()][:6]
@@ -87,7 +88,7 @@ class Planner:
             # Execute step with long timeout tolerance
             step_result = self.llm.generate(
                 f"Step {idx}: {step}\n\nContext:\n{context}\n\nRespond only with the result of this step.",
-                system="You are executing one step of a plan. Be concise and accurate.",
+                system=PLAN_STEP_EXECUTION_SYSTEM,
                 temperature=0.3
             )
 
@@ -105,8 +106,7 @@ class Planner:
         logger.info("All steps complete. Generating final answer...")
         final = self.llm.generate(
             f"User goal: {goal}\n\nGive a clear, natural final answer using only the results below.",
-            system="Synthesize the results into a helpful response. Do NOT mention steps or planning.\n\n"
-                   f"RESULTS:\n{json.dumps(workspace, indent=2)}",
+            system=PLAN_FINAL_ANSWER_SYSTEM + f"RESULTS:\n{json.dumps(workspace, indent=2)}",
             temperature=0.4
         )
 

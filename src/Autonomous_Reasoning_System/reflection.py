@@ -2,6 +2,7 @@ import logging
 import json
 import datetime
 from typing import List
+from .prompts import REFLECTION_ANALYSIS_SYSTEM
 
 # Setup simple logging
 logger = logging.getLogger("ARS_Reflection")
@@ -35,7 +36,7 @@ class Reflector:
             f"MEMORIES:\n{context_str}"
         )
         
-        system = "You are an analytical engine. Extract high-level insights from raw logs."
+        system = REFLECTION_ANALYSIS_SYSTEM
         
         # 3. Generate Insight
         insight = self.llm.generate(prompt, system=system, temperature=0.5)

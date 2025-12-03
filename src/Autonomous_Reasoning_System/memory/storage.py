@@ -11,6 +11,7 @@ import duckdb
 from fastembed import TextEmbedding
 
 from Autonomous_Reasoning_System import config
+from Autonomous_Reasoning_System.models import Plan, PlanStatus
 
 logger = logging.getLogger("ARS_Memory")
 
@@ -170,6 +171,21 @@ class MemoryStorage:
                     (plan_id, goal_text, steps_json, status, now, now)
                 )
 
+    def get_plan(self, plan_id: str) -> Optional[Plan]:
+        with self._lock:
+            r = self.con.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchone()
+            if r:
+                # r = (id, goal, steps_json, status, created, updated)
+                return Plan(
+                    id=r[0],
+                    goal=r[1],
+                    steps=json.loads(r[2]),
+                    status=r[3],
+                    created_at=r[4],
+                    updated_at=r[5]
+                )
+        return None
+
     def search_similar(self, query: str, limit: int = 5, threshold: float = 0.4) -> List[Dict[str, Any]]:
         query_vec = self._get_embedding(query)
         with self._lock:
@@ -197,10 +213,21 @@ class MemoryStorage:
                 (entity.lower(), entity.lower())
             ).fetchall()
 
-    def get_active_plans(self) -> List[Dict[str, Any]]:
+    def get_active_plans(self) -> List[Plan]:
         with self._lock:
             res = self.con.execute("SELECT * FROM plans WHERE status = 'active'").fetchall()
-        return [{"id": r[0], "goal": r[1], "steps": json.loads(r[2]), "status": r[3]} for r in res]
+
+        plans = []
+        for r in res:
+             plans.append(Plan(
+                 id=r[0],
+                 goal=r[1],
+                 steps=json.loads(r[2]),
+                 status=r[3],
+                 created_at=r[4],
+                 updated_at=r[5]
+             ))
+        return plans
 
     def get_recent_memories(self, limit: int = 10) -> List[str]:
         with self._lock:

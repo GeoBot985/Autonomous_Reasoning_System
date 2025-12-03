@@ -13,6 +13,7 @@ from .memory import get_memory_system
 from .tools.web_search import perform_google_search
 from .retrieval import RetrievalSystem
 from .reflection import get_reflector
+from .plan_builder import get_planner
 
 logger = logging.getLogger("ARS_Brain")
 
@@ -336,8 +337,6 @@ class Brain:
     def _handle_planning(self, text: str) -> str:
         try:
             logger.info("Loading Planner...")
-            # Late import to avoid circular dependency
-            from .plan_builder import get_planner
             logger.info(f"Delegating to Planner: '{text}'")
             return get_planner(self.memory, self.llm, self.retrieval).process_request(text)
         except Exception as e:

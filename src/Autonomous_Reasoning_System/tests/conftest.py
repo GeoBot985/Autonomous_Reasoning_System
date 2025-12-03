@@ -1,22 +1,37 @@
+import pytest
 import sys
 from unittest.mock import MagicMock
-import pytest
 import numpy as np
 
-# Mock 'ocr' module globally to prevent circular imports as per memory instructions
-sys.modules['Autonomous_Reasoning_System.tools.ocr'] = MagicMock()
-# Also mock 'pypdf' if it's not installed in the environment but used in the code
-# sys.modules['pypdf'] = MagicMock()
+# --- Mock circular import ---
+# This must happen before any imports that might trigger the circular dependency
+sys.modules["Autonomous_Reasoning_System.tools.ocr"] = MagicMock()
+
+# --- Mock FastEmbed ---
+# We mock fastembed.TextEmbedding to avoid model downloads and rate limits.
+# This needs to be done before MemoryStorage is imported in tests.
+
+class MockTextEmbedding:
+    def __init__(self, model_name=None, **kwargs):
+        self.model_name = model_name
+
+    def embed(self, documents):
+        # Return a generator of dummy embeddings
+        # The dimension should match config.VECTOR_DIMENSION (384)
+        for _ in documents:
+            yield np.random.rand(384).astype(np.float32)
+
+@pytest.fixture(autouse=True)
+def mock_fastembed(monkeypatch):
+    """
+    Globally mock fastembed to prevent model downloads during tests.
+    """
+    monkeypatch.setattr("fastembed.TextEmbedding", MockTextEmbedding)
 
 @pytest.fixture
-def mock_embedding_model():
-    """Returns a mock embedding model that returns fixed vectors."""
-    mock = MagicMock()
-    # Mock embed to return a generator of numpy arrays (embeddings)
-    # We use a fixed size 384 as per config
-    def side_effect(texts):
-        for text in texts:
-            # Return numpy array, which has .tolist()
-            yield np.array([0.1] * 384)
-    mock.embed.side_effect = side_effect
-    return mock
+def mock_memory_storage(monkeypatch):
+    """
+    Fixture to provide a MemoryStorage instance with mocked internals if needed specifically.
+    """
+    # This might not be needed if the global mock works, but good to have as backup
+    pass

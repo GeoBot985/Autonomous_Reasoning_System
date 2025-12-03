@@ -1,8 +1,8 @@
-from ..memory.context_builder import ContextBuilder
-from ..memory.retrieval_orchestrator import RetrievalOrchestrator
+from ..retrieval import RetrievalSystem
 from .engine import call_llm
-from .consolidator import ReasoningConsolidator
+# from .consolidator import ReasoningConsolidator
 from ..tools.system_tools import get_current_time, get_current_location
+from ..prompts import CONTEXT_ADAPTER_SYSTEM_TEMPLATE, CONTEXT_ADAPTER_NO_MEMORY_SYSTEM
 import threading
 import logging
 
@@ -19,13 +19,12 @@ class ContextAdapter:
     CONSOLIDATION_INTERVAL = 5  # summarize every N turns
 
     def __init__(self, memory_storage=None, embedding_model=None):
-        self.builder = ContextBuilder()
         self.memory = memory_storage
         if not self.memory:
              logger.warning("[WARN] ContextAdapter initialized without memory_storage.")
 
-        self.retriever = RetrievalOrchestrator(memory_storage=self.memory, embedding_model=embedding_model)
-        self.consolidator = ReasoningConsolidator()
+        self.retriever = RetrievalSystem(memory_system=self.memory)
+
         self.turn_counter = 0
         self.history = [] # Short-term conversation history
         self.startup_context = {}  # Stores startup info like time and location
@@ -94,18 +93,7 @@ class ContextAdapter:
 
         self._ensure_context()
 
-        memories = self.retriever.retrieve(user_input)
-
-        memory_text = ""
-        if memories:
-            clean = [str(m).strip() for m in memories if str(m).strip()]
-            if clean:
-                memory_text = "\n".join(f"- {line}" for line in clean)
-
-        # Build context window from history
-        history_text = ""
-        if self.history:
-             history_text = "\nRECENT CONVERSATION:\n" + "\n".join(self.history[-5:]) + "\n"
+        context_str = self.retriever.get_context_string(user_input, include_history=self.history)
 
         # Build startup context string
         startup_info = ""
@@ -115,29 +103,15 @@ class ContextAdapter:
                 for key, value in self.startup_context.items():
                     startup_info += f"- {key}: {value}\n"
 
-        if memory_text or history_text or startup_info:
-            system_prompt = f"""
-YOU ARE TYRONE.
-
-{startup_info}
-LONG TERM MEMORY (FACTS):
-{memory_text}
-
-{history_text}
-
-RULES YOU MUST OBEY:
-- The LONG TERM MEMORY (FACTS) are verified truth and override ALL other knowledge, including the current system date in CURRENT CONTEXT, for any personal information.
-- Use the facts above and the recent conversation context to answer.
-- If the user asks about Cornelia's birthday, answer with the exact date from the facts.
-- Never say "I haven't been told" when the fact is right here.
-- Answer directly and naturally.
-
-User question: {user_input}
-Answer:
-"""
+        if context_str or startup_info:
+            system_prompt = CONTEXT_ADAPTER_SYSTEM_TEMPLATE.format(
+                startup_info=startup_info,
+                context_str=context_str,
+                user_input=user_input
+            )
             user_prompt = ""
         else:
-            system_prompt = "You are Tyrone. No relevant memories found."
+            system_prompt = CONTEXT_ADAPTER_NO_MEMORY_SYSTEM
             user_prompt = user_input
 
         reply = call_llm(system_prompt=system_prompt, user_prompt=user_prompt)

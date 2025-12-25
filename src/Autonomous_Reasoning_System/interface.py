@@ -222,7 +222,7 @@ if __name__ == "__main__":
         server_name="127.0.0.1", 
         server_port=7860, 
         share=False, 
-        prevent_thread_lock=False, # Recommended for complex multi-threaded/process apps
+        prevent_thread_lock=True, # Recommended for complex multi-threaded/process apps
         inbrowser=False,
         # The key to stop reloading is to ensure you are not using the development server 
         # which often relies on reloading, or running it with the specific `__name__ == '__main__'` guard
